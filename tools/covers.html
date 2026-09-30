@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cover art</title>
+<!--
+  Store cover art (2026-09-28). Dev tool — never shipped. Renders the three CrazyGames
+  covers from the game's OWN assets and UI code (wood textures, ui.js plank sign and
+  fonts), so the store page matches the game. The old covers (tools/gen_covers.py)
+  used a gradient title with a thick black outline — the look the owner's play-testers
+  called out as "AI". Open with ?w=1920&h=1080 (or 800x1200, 800x800) through
+  tools/serve.py; a screenshot of #c at 1:1 is the cover.
+
+  Platform rules (guidelines §4): exact sizes, one consistent set, the title in a
+  stylised treatment, no borders, no other text, no icons, not a raw screenshot.
+-->
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import * as UI from '../src/ui.js';
+
+const q = new URLSearchParams(location.search);
+const W = +q.get('w') || 1920, H = +q.get('h') || 1080;
+const c = document.getElementById('c');
+c.width = W; c.height = H;
+const g = c.getContext('2d');
+
+const load = (src) => new Promise((res) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
+await UI.loadUiSkin('../');
+const woods = {};
+for (const n of ['padauk', 'purpleheart', 'zebrano', 'bloodwood', 'yellowheart', 'walnut', 'spalted', 'birch']) {
+  woods[n] = await load(`../assets/wood/${n}.jpg`);
+}
+
+// Scale everything off the short side so the three sizes are one composition.
+const S = Math.min(W, H) / 1080;
+const land = W / H;
+
+// Bench: dark, with a warm pool of work-lamp light.
+g.fillStyle = '#16100b';
+g.fillRect(0, 0, W, H);
+const lamp = g.createRadialGradient(W * 0.5, H * 0.46, 40 * S, W * 0.5, H * 0.46, Math.max(W, H) * 0.75);
+lamp.addColorStop(0, 'rgba(255,196,120,0.30)');
+lamp.addColorStop(1, 'rgba(0,0,0,0)');
+g.fillStyle = lamp;
+g.fillRect(0, 0, W, H);
+
+// A board: texture rotated into place, with a sawn edge shadow.
+function board(img, cx, cy, bw, bh, rot, shade = 0) {
+  g.save();
+  g.translate(cx, cy);
+  g.rotate(rot);
+  g.shadowColor = 'rgba(0,0,0,0.6)';
+  g.shadowBlur = 30 * S;
+  g.shadowOffsetY = 14 * S;
+  g.fillStyle = '#3a2616';
+  g.fillRect(-bw / 2, -bh / 2, bw, bh);
+  g.shadowColor = 'transparent';
+  if (img) {
+    // Grain runs along the board: the textures tile on Y, so rotate them 90deg.
+    g.save();
+    g.beginPath(); g.rect(-bw / 2, -bh / 2, bw, bh); g.clip();
+    g.rotate(Math.PI / 2);
+    const k = (bh / img.width) * 1.02;
+    for (let x = -bw / 2 - img.height * k; x < bw / 2 + img.height * k; x += img.height * k) {
+      g.drawImage(img, -bh / 2, -x - img.height * k, img.width * k, img.height * k);
+    }
+    g.restore();
+  }
+  // Top arris light, bottom edge dark: reads as a thick board, not a sticker.
+  const e = g.createLinearGradient(0, -bh / 2, 0, bh / 2);
+  e.addColorStop(0, 'rgba(255,240,210,0.22)');
+  e.addColorStop(0.08, 'rgba(255,240,210,0)');
+  e.addColorStop(0.9, 'rgba(0,0,0,0)');
+  e.addColorStop(1, 'rgba(0,0,0,0.45)');
+  g.fillStyle = e;
+  g.fillRect(-bw / 2, -bh / 2, bw, bh);
+  if (shade) { g.fillStyle = `rgba(10,6,3,${shade})`; g.fillRect(-bw / 2, -bh / 2, bw, bh); }
+  g.restore();
+}
+
+// Offcuts fanned behind — the board variety is the game's showpiece.
+const span = Math.hypot(W, H) * 1.1;
+const fan = [
+  ['purpleheart', -0.62, -0.30], ['zebrano', 0.55, -0.24], ['yellowheart', -0.35, 0.36],
+  ['bloodwood', 0.48, 0.30], ['spalted', -0.9, 0.05], ['walnut', 0.95, 0.02],
+];
+for (const [n, rot, off] of fan) {
+  board(woods[n], W * 0.5 + off * W * 0.35, H * 0.5 + off * H * 0.55, span, 240 * S, rot, 0.28);
+}
+
+// The hero board being cut: padauk, with the cyan guide line along it.
+const heroRot = land > 1.2 ? -0.16 : land < 0.8 ? -1.1 : -0.42;
+const hbw = span, hbh = (land < 0.8 ? 420 : 360) * S;
+board(woods.padauk, W * 0.5, H * 0.5, hbw, hbh, heroRot);
+
+g.save();
+g.translate(W * 0.5, H * 0.5);
+g.rotate(heroRot);
+// Where the blade is (left of centre along the board); the line runs on ahead of it.
+const bladeX = -hbw * 0.13;
+const lineY = (x) => Math.sin(x / (260 * S)) * 70 * S + Math.sin(x / (97 * S)) * 16 * S;
+const path = (x0, x1) => { g.beginPath(); for (let x = x0; x <= x1; x += 4) { const y = lineY(x); x === x0 ? g.moveTo(x, y) : g.lineTo(x, y); } };
+// Kerf behind the blade: the cut already made.
+path(-hbw / 2, bladeX);
+g.strokeStyle = 'rgba(20,8,2,0.95)'; g.lineWidth = 9 * S; g.lineCap = 'round'; g.stroke();
+g.strokeStyle = 'rgba(255,200,150,0.35)'; g.lineWidth = 2 * S; g.stroke();
+// Guide line ahead: glow then core.
+for (const [w, a] of [[44, 0.10], [24, 0.24], [11, 0.6]]) {
+  path(bladeX, hbw / 2); g.strokeStyle = `rgba(80,230,255,${a})`; g.lineWidth = w * S; g.stroke();
+}
+path(bladeX, hbw / 2); g.strokeStyle = '#e8fdff'; g.lineWidth = 4.2 * S; g.stroke();
+// Blade: a short serrated steel strip standing in the cut, and the sawdust spray.
+const by = lineY(bladeX);
+g.save();
+g.translate(bladeX, by);
+g.rotate(-heroRot);
+const bl = g.createLinearGradient(-7 * S, 0, 7 * S, 0);
+bl.addColorStop(0, '#6d7479'); bl.addColorStop(0.5, '#eef3f5'); bl.addColorStop(1, '#5d6468');
+g.fillStyle = bl;
+g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 10 * S; g.shadowOffsetX = 6 * S;
+g.fillRect(-6 * S, -150 * S, 12 * S, 170 * S);
+g.restore();
+let seed = 7;
+const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+for (let i = 0; i < 260; i++) {
+  const a = Math.PI + (rnd() - 0.5) * 1.6;
+  const d = Math.pow(rnd(), 1.7) * 230 * S;
+  const r = (0.8 + rnd() * 2.8) * S;
+  g.fillStyle = `rgba(${240 - rnd() * 40},${150 + rnd() * 50},${90 + rnd() * 40},${0.35 + rnd() * 0.6})`;
+  g.beginPath(); g.arc(bladeX + Math.cos(a) * d, by + Math.sin(a) * d * 0.6, r, 0, 6.2832); g.fill();
+}
+g.restore();
+
+// Vignette so the title and the cut are the brightest things.
+const v = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.72);
+v.addColorStop(0, 'rgba(0,0,0,0)');
+v.addColorStop(1, 'rgba(0,0,0,0.62)');
+g.fillStyle = v;
+g.fillRect(0, 0, W, H);
+
+// Title: the game's own stencilled plank sign (ui.js), the only text on the cover.
+// Landscape has room for one long sign; portrait and square stack two planks so the
+// title stays big enough to read at thumbnail size (the grid shows covers small).
+if (land > 1.2) {
+  const sw = Math.min(W * 0.72, 1240 * S), sh = sw * 0.2;
+  UI.plankSign(g, W / 2, H * 0.70, sw, sh, 'CUT IT STRAIGHT', Math.round(sh * 0.66));
+} else {
+  const sh = (land < 0.8 ? 170 : 160) * S * (land < 0.8 ? 1.25 : 1);
+  const y0 = land < 0.8 ? H * 0.66 : H * 0.62;
+  UI.plankSign(g, W / 2 - 18 * S, y0, W * 0.62, sh, 'CUT IT', Math.round(sh * 0.7));
+  UI.plankSign(g, W / 2 + 14 * S, y0 + sh * 1.06, W * 0.86, sh, 'STRAIGHT', Math.round(sh * 0.7));
+}
+
+window.__coverReady = true;
+</script>
+</body>
+</html>

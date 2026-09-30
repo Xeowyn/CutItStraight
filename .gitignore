@@ -1,0 +1,6 @@
+# Build output (regenerate with tools/build_upload.py / tools/build_standalone.py)
+dist/
+
+# Python caches
+__pycache__/
+*.pyc

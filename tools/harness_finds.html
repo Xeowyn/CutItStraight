@@ -1,0 +1,105 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Odd finds harness</title>
+<!--
+  Every odd find against the wood it is actually cut on, at three lamp directions.
+
+  It exists for the same reason the 3D harnesses do: this art is drawn entirely from
+  code, and §8.4 says code-drawn art is exactly what reads as generic to a human eye
+  while passing every review round. The finds are also LIT from the work light's real
+  position, so a fault in the lighting only shows when you compare the same object at
+  several lamp angles side by side — which is what the rows here are.
+
+  Open this before and after touching the odd-finds block in src/render.js.
+-->
+<style>
+  body { background: #141b21; color: #cfe3f0; font: 600 14px system-ui, sans-serif; margin: 0; padding: 20px; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  p { color: #8ba3b4; font-weight: 500; margin: 0 0 16px; max-width: 900px; line-height: 1.5; }
+  canvas { display: block; border-radius: 12px; }
+  .row { color: #7f98aa; font-size: 12px; margin: 10px 0 4px; }
+</style>
+
+<h1>Odd finds</h1>
+<p>
+  Each column is one find (pre-rendered by tools/gen_finds.py); each row is a different work-light direction — top: the find is
+  far up the board and lit from the blade's side; middle: lamp off to one side; third:
+  sitting directly under the lamp, lit flat with almost no cast shadow. The BOTTOM row is
+  the same finds SAWN IN HALF, which is what happens to one the blade goes through. What
+  to check: the highlight is on the lamp side in every row, the shadow points away from
+  it, every object is nameable from its outline alone, and every sawn half is a half of
+  the object rather than a clipped picture of it.
+</p>
+<div id="out"></div>
+
+<script type="module">
+import * as R from '../src/render.js';
+import { OBJECT_TYPES } from '../src/levels.js';
+
+const CELL = 190;
+const LAMPS = [
+  ['far up the board', 0, 700],
+  ['lamp off to the side', 420, 260],
+  ['directly under the lamp', 0, 0],
+  // A find the blade has gone through is SAWN IN HALF and stays in the board. That is
+  // a different draw path from an intact find (two clipped halves parted at the kerf,
+  // with the sawn faces lit), so it needs its own row or it is never looked at.
+  ['sawn in half', 0, 300],
+];
+
+const out = document.getElementById('out');
+const c = document.createElement('canvas');
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+const W = CELL * OBJECT_TYPES.length;
+const H = CELL * LAMPS.length + 26;
+c.width = W * DPR; c.height = H * DPR;
+c.style.width = W + 'px'; c.style.height = H + 'px';
+out.appendChild(c);
+const ctx = c.getContext('2d');
+ctx.scale(DPR, DPR);
+
+const tex = new Image();
+// The finds are sprites now, loaded relative to the PAGE — so from tools/ they need
+// the same ../ prefix the texture does.
+tex.onload = start;
+tex.onerror = start;
+tex.src = '../assets/wood/pine.jpg';
+async function start() { await R.loadFindSprites('../'); draw(); }
+
+function draw() {
+  if (tex.complete && tex.naturalWidth) {
+    ctx.fillStyle = ctx.createPattern(tex, 'repeat');
+  } else {
+    ctx.fillStyle = '#c8a173';       // textures missing: still usable for silhouettes
+  }
+  ctx.fillRect(0, 0, W, H);
+
+  const L = { cx: 0, bladeY: 0, h: 4000 };
+  for (let row = 0; row < LAMPS.length; row++) {
+    const [, ox, oy] = LAMPS[row];
+    for (let i = 0; i < OBJECT_TYPES.length; i++) {
+      const cx0 = CELL * i + CELL / 2;
+      const cy0 = CELL * row + CELL / 2 + 26;
+      // drawObjects reads a plank, so hand it a one-object stub and run the real path.
+      const sawn = row === LAMPS.length - 1;
+      const plank = {
+        objects: [{
+          s: 0, type: OBJECT_TYPES[i], spin: i * 1.7 + row,
+          hit: sawn, resolved: sawn, hitS: -60, hitX: 0,
+        }],
+        pts: [0], step: 1, length: 10,
+      };
+      L.cx = cx0 + ox;
+      L.bladeY = cy0 + oy;
+      R.drawObjects(ctx, L, { plank, s: 0 }, cx0, cy0, 1.2);
+    }
+  }
+
+  ctx.fillStyle = 'rgba(18,26,32,0.75)';
+  ctx.fillRect(0, 0, W, 24);
+  ctx.fillStyle = '#cfe3f0';
+  ctx.font = '700 13px system-ui, sans-serif';
+  OBJECT_TYPES.forEach((t, i) => ctx.fillText(t, CELL * i + 12, 16));
+  window.__ready = true;
+}
+</script>

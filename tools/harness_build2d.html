@@ -1,0 +1,85 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Build and chest harness</title>
+<!--
+  Every kitchen empty, part-built and complete, and the chest at each stage of the
+  ceremony, drawn by the game's own code from the Blender-rendered sprites.
+
+  Open this after re-running tools/gen_kitchen.py or tools/gen_chest.py, or after
+  touching src/build.js, src/chest.js or the layouts in src/kitchens.js. What to check:
+  every object faces INTO the room (doors, drawers, the oven door, the fridge handles),
+  nothing floats off the floor or hangs off the wall, the ghost of the unbought
+  remainder is one even pale silhouette, and nothing has a visible box round it.
+  Not part of the bundle.
+-->
+<style>
+  body { background: #141b21; color: #cfe3f0; font: 600 14px system-ui, sans-serif; margin: 0; padding: 20px; }
+  h1 { font-size: 17px; margin: 18px 0 6px; }
+  canvas { display: block; border-radius: 12px; background: #1d2a33; }
+  .grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .cap { color: #7f98aa; font-size: 12px; margin: 4px 0 0; }
+</style>
+<div id="out"></div>
+<script type="module">
+import { loadKitchenArt, drawProjectBadge } from '../src/build.js';
+import { loadChestArt, createChestScene, chestTap, updateChest, drawChestScene } from '../src/chest.js';
+import { loadUiSprites } from '../src/render.js';
+import { KITCHENS } from '../src/kitchens.js';
+
+const out = document.getElementById('out');
+function cell(parent, w, h, caption) {
+  const wrap = document.createElement('div');
+  const c = document.createElement('canvas');
+  c.width = w * 2; c.height = h * 2;
+  c.style.width = w + 'px'; c.style.height = h + 'px';
+  const cap = document.createElement('div');
+  cap.className = 'cap';
+  cap.textContent = caption;
+  wrap.append(c, cap);
+  parent.append(wrap);
+  const ctx = c.getContext('2d');
+  ctx.setTransform(2, 0, 0, 2, 0, 0);
+  return ctx;
+}
+
+await Promise.all([loadKitchenArt('../'), loadChestArt('../'), loadUiSprites('../')]);
+
+for (const k of KITCHENS) {
+  const h = document.createElement('h1');
+  h.textContent = k.name;
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  out.append(h, grid);
+  const n = k.items.length;
+  for (const bought of [0, Math.ceil(n / 2), n]) {
+    const ctx = cell(grid, 420, 420, `${bought} / ${n} parts`);
+    drawProjectBadge(ctx, 210, 210, 420, k.id, bought);
+  }
+}
+
+// The chest, at each stage, drawn by the real scene code into a phone-shaped frame.
+const h = document.createElement('h1');
+h.textContent = 'Chest';
+const grid = document.createElement('div');
+grid.className = 'grid';
+out.append(h, grid);
+const L = { cx: 360, h: 1300, left: 0, right: 720 };
+const view = { safeTop: 0, safeBottom: 0 };
+const noButton = () => ({});
+const stages = [
+  ['closed', 0, 0], ['one latch off', 1, 0.5], ['two off', 2, 0.5],
+  ['bursting', 3, 0.25], ['open, loot', 3, 1.4],
+];
+const loot = [
+  { kind: 'coins', label: 'coins', amount: '+350', colour: '#ffd23f' },
+  { kind: 'key', label: 'keys', amount: '+2', colour: '#8fe0ff' },
+];
+for (const [name, taps, after] of stages) {
+  const ctx = cell(grid, 300, 540, name);
+  ctx.scale(300 / 720, 300 / 720);
+  const S = createChestScene(loot, 'STAR CHEST');
+  for (let i = 0; i < taps; i++) chestTap(S);
+  for (let t = 0; t < after; t += 1 / 60) updateChest(S, 1 / 60);
+  drawChestScene(ctx, L, S, noButton, view);
+}
+</script>
