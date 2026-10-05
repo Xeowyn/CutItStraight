@@ -153,10 +153,20 @@ function drawKitchen(ctx, kitchenId, bought, cx, cy, maxW, maxH, opts = {}) {
   const ghosts = items.filter((it) => !bought(it.i));
   if (ghosts.length && opts.ghost !== false) {
     const g = ghostCanvas(ctx.canvas);
+    // The ghost layer only changes when a part is bought, the room changes or the
+    // view moves, so it is rebuilt only then. It used to be cleared, redrawn and
+    // re-tinted over the WHOLE canvas on every frame - two full-screen passes at
+    // device resolution - which is what made a part dropping in stutter.
+    const m = ctx.getTransform();
+    const gkey = [kitchenId, ghosts.length, ghosts.every((it) => sil[it.key] || img[it.key]) ? 1 : 0,
+      g.width, g.height, cx, cy, maxW, maxH,
+      m.a.toFixed(4), m.d.toFixed(4), m.e.toFixed(1), m.f.toFixed(1)].join('|');
+    if (ghostKey !== gkey) {
+    ghostKey = gkey;
     const gc = g.getContext('2d');
     gc.setTransform(1, 0, 0, 1, 0, 0);
     gc.clearRect(0, 0, g.width, g.height);
-    gc.setTransform(ctx.getTransform());
+    gc.setTransform(m);
     for (const it of ghosts) {
       const im = sil[it.key] || img[it.key];
       if (!im) continue;
@@ -168,6 +178,7 @@ function drawKitchen(ctx, kitchenId, bought, cx, cy, maxW, maxH, opts = {}) {
     gc.fillStyle = 'rgb(236,244,250)';
     gc.fillRect(0, 0, g.width, g.height);
     gc.globalCompositeOperation = 'source-over';
+    }
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = opts.ghostAlpha ?? 0.22;
@@ -215,11 +226,13 @@ function drawKitchen(ctx, kitchenId, bought, cx, cy, maxW, maxH, opts = {}) {
 }
 
 let ghostBuf = null;
+let ghostKey = '';
 function ghostCanvas(target) {
   if (!ghostBuf) ghostBuf = document.createElement('canvas');
   if (ghostBuf.width !== target.width || ghostBuf.height !== target.height) {
     ghostBuf.width = target.width;
     ghostBuf.height = target.height;
+    ghostKey = '';
   }
   return ghostBuf;
 }

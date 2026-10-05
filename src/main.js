@@ -138,11 +138,21 @@ function save() {
   // than its start. `load()` has already read the previous value and decided the ad
   // grace by this point, so this can never race it.
   META.touchLastPlayed(meta);
+  // Every save is a point where something just changed, so it is also where a newly
+  // earned achievement is noticed and announced. The reward waits on the page.
+  const fresh = META.checkAchievements(meta);
+  if (fresh.length) {
+    toast(fresh.length > 1 ? `${fresh.length} achievements earned!` : `Achievement: ${fresh[0].name}`);
+    A.keyChime();
+  }
   SDK.saveData(META.serialise(meta));
 }
 
 function load() {
   META.deserialise(meta, SDK.loadData());
+  // An existing save is credited for what it has already done, quietly - a stack of
+  // toasts on the loading screen would announce nothing the player just did.
+  META.checkAchievements(meta);
   // Decide the forced-ad grace BEFORE stamping this session's timestamp, or every
   // session would look like it had just been played and nobody would ever qualify.
   const g = META.adGraceFor(meta);
@@ -387,7 +397,9 @@ function finishLevel() {
     // A failed Daily Cut spends the day's attempt ("One board. One attempt."). The
     // streak is not broken by a failure, only by a missed day; a continue that then
     // finishes the board still pays it through the normal completion path.
-    if (game.daily) { meta.daily.done = true; save(); }
+    meta.stats.fails++;
+    if (game.daily) meta.daily.done = true;
+    save();
     game.state = 'failed';
     game.resultT = 0;
     A.failSound();
@@ -456,6 +468,8 @@ function finishLevel() {
   meta.stats.finds += cut.objectsHit;
   meta.stats.perfectTurns += cut.keys;
   if (stars === 3) meta.stats.threeStars++;
+  meta.stats.perfectJumps += cut.perfectJumps;
+  if (isFlawless(acc)) meta.stats.flawless++;
   meta.stats.bestCombo = Math.max(meta.stats.bestCombo, COMBO_TIERS[cut.peakTier].mult);
 
   A.updateSaw(false, 0, 0);
@@ -619,6 +633,10 @@ function doContinue() {
 
 // 3 - 2 - 1 - GO. Also used when resuming from the pause menu mid-cut, which has
 // exactly the same problem: the board is moving the instant the menu closes.
+// The count runs at COUNT_RATE counts per second: 3-2-1-GO takes ~1.7s instead of
+// 3.75s. A full second per number, before every board, was dead time the owner
+// flagged as boring (2026-10-04) - and boards are only ~9-17s long.
+const COUNT_RATE = 2.2;
 function countIn(seconds = 3, reason = 'start') {
   game.countT = seconds + 0.75;      // the tail is the "GO"
   game.countStep = -1;
@@ -653,7 +671,7 @@ function update(dt) {
   } else if (game.state === 'playing' && game.countT > 0) {
     // Counting in: the board is held still and steering is discarded, so the
     // player cannot be blamed for a drift they did not make.
-    game.countT -= dt;
+    game.countT -= dt * COUNT_RATE;
     input.take(dt);
     input.reset();
     const step = Math.ceil(game.countT - 0.75);
@@ -734,14 +752,9 @@ function update(dt) {
       }
     }
 
-    // Rising chime ladder while the cut stays dead-on.
-    const step = Math.floor(cut.streak / 0.85);
-    if (cut.band === 'perfect' && step > game.streakStep) {
-      game.streakStep = step;
-      A.chime(step);
-    } else if (cut.band !== 'perfect') {
-      game.streakStep = Math.min(game.streakStep, Math.floor(cut.streak / 0.85));
-    }
+    // There used to be a rising chime every 0.85s while the cut stayed dead-on. The
+    // owner asked for it to go (2026-10-04): on a clean run it is a beep that never
+    // stops. The combo tier sounds still mark a streak.
 
     // Gold sparkles are EARNED by holding a long perfect streak — never purchased.
     if (cut.streak > 3) {
@@ -837,7 +850,7 @@ function update(dt) {
   }
   if (game.state === 'failed') game.resultT += dt;
 
-  if (game.state === 'workshop' || game.state === 'upgrades') {
+  if (game.state === 'workshop' || game.state === 'upgrades' ) {
     game.wsIntro = Math.min(1.4, game.wsIntro + dt * 1.9);
   }
   if (game.state === 'build') {
@@ -976,18 +989,82 @@ function drawButton(b) {
   // so the button the player just hit visibly recoils.
   const pop = b.pop ?? 1;
   const punch = (game.punch && game.punch.id === b.id) ? game.punch.t : 0;
-  if (pop < 0.999 || punch > 0) {
-    const sc = (0.72 + 0.28 * easeOutBack(clamp(pop, 0, 1))) * (1 + punch * 0.10);
+  // A badged button - one with a reward or something new behind it - does not sit
+  // still: every couple of seconds it gives a short wiggle, and a gold outline
+  // breathes round it. Phase is offset by position so a column of CLAIM buttons
+  // ripples instead of twitching in unison.
+  let wig = 0;
+  if (b.badge && !pressed) {
+    const ph = (game.time + (b.x * 0.0013 + b.y * 0.0021)) % 2.3;
+    if (ph < 0.55) wig = Math.sin((ph / 0.55) * Math.PI * 4) * (1 - ph / 0.55);
+  }
+  if (pop < 0.999 || punch > 0 || wig !== 0) {
+    const sc = (0.72 + 0.28 * easeOutBack(clamp(pop, 0, 1))) * (1 + punch * 0.10) * (1 + Math.abs(wig) * 0.035);
     ctx.save();
     ctx.globalAlpha = clamp(pop * 1.5, 0, 1);
     ctx.translate(b.x + b.w / 2, b.y + b.h / 2);
+    ctx.rotate(wig * Math.min(0.05, 9 / b.w));
     ctx.scale(sc, sc);
     ctx.translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
+    if (b.badge) drawBadgeGlow(b, y);
     drawButtonBody(b, y, pressed);
+    if (b.badge) drawBadge(b, y);
     ctx.restore();
     return;
   }
+  if (b.badge) drawBadgeGlow(b, y);
   drawButtonBody(b, y, pressed);
+  if (b.badge) drawBadge(b, y);
+}
+
+// The breathing gold outline round a badged button. Concentric translucent strokes,
+// not shadowBlur - it is drawn live on every frame.
+function drawBadgeGlow(b, y) {
+  const p = 0.5 + 0.5 * Math.sin(game.time * 3.4 + b.y * 0.01);
+  ctx.save();
+  for (let i = 3; i >= 1; i--) {
+    ctx.strokeStyle = `rgba(255,208,74,${(0.10 + 0.16 * p) * (4 - i) / 3})`;
+    ctx.lineWidth = i * 5;
+    R.roundRect(ctx, b.x - 1, y - 1, b.w + 2, b.h + 2, 8);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// The "!" itself: a red starburst that turns slowly, with the mark hopping on it.
+// Plain fills only - no shadowBlur.
+function drawBadge(b, y) {
+  const r = Math.min(20, Math.max(12, b.h * 0.3));
+  const hop = Math.abs(Math.sin(game.time * 5.2 + b.x * 0.01));
+  const cx = b.x + b.w - 8, cy = y + 8 - hop * 5;
+  const burst = (rad, spin) => {
+    ctx.beginPath();
+    for (let i = 0; i < 20; i++) {
+      const rr = i % 2 === 0 ? rad : rad * 0.78;
+      const a = (Math.PI / 10) * i + spin;
+      const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a) * rr;
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  };
+  const spin = game.time * 0.9;
+  ctx.save();
+  ctx.fillStyle = 'rgba(20,10,4,0.4)';
+  ctx.beginPath(); ctx.arc(cx + 1.5, y + 11, r * 0.95, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffd23f';
+  burst(r * 1.32, spin);
+  ctx.fillStyle = '#e03a2c';
+  burst(r * 1.08, spin);
+  ctx.fillStyle = '#fff4dc';
+  ctx.font = UI.F.stencil(Math.round(r * 1.55));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const s = 1 + hop * 0.14;
+  ctx.translate(cx, cy + 1);
+  ctx.scale(s, s);
+  ctx.fillText('!', 0, 0);
+  ctx.restore();
 }
 
 // --- Volume sliders ----------------------------------------------------------
@@ -1336,6 +1413,8 @@ function onTap(b) {
       const S = game.chestScene;
       if (!S || !CHEST.chestReadyToCollect(S)) break;
       game.chestOnCollect?.();
+      meta.stats.chests++;
+      save();
       game.chestOnCollect = null;
       // The loot flies to the coin counter, so the balance visibly grows.
       FX.flight(fx, L.cx, L.h * 0.42, L.cx, 120, { count: 12, stagger: 0.03, dur: 0.5, r: 15 });
@@ -1383,6 +1462,7 @@ function onTap(b) {
     }
 
     // --- Pause menu
+    case 'home-settings':
     case 'open-menu':
       game.menuReturn = game.state;
       game.state = 'menu';
@@ -1403,7 +1483,8 @@ function onTap(b) {
       BUILD.viewCurrentRoom(game.build);
       game.build.intro = 0;
       game.build.idle = 0;
-      game.buildReturn = game.state === 'home' ? 'home' : 'menu';
+      // BACK returns to whichever screen opened it - the results panel included.
+      game.buildReturn = game.state === 'home' ? 'home' : game.state === 'complete' ? 'complete' : 'menu';
       game.state = 'build';
       break;
     case 'menu-levels':
@@ -1454,6 +1535,17 @@ function onTap(b) {
         // The reward is the fitting itself, so it is only granted on adFinished.
         runAd(SDK.showRewardedAd, () => fitUpgrade(id, b, true),
           () => toast('Ad unavailable — coins kept'));
+      } else if (b.id.startsWith('achclaim-')) {
+        const paid = META.claimAchievement(meta, b.id.slice(9));
+        if (paid) {
+          A.fanfare();
+          FX.confetti(fx, b.x + b.w / 2, b.y + b.h / 2, 40);
+          FX.ring(fx, b.x + b.w / 2, b.y + b.h / 2, 'rgba(255,214,80,0.9)', { to: 180, life: 0.5, width: 7 });
+          FX.flight(fx, b.x + b.w / 2, b.y + b.h / 2,
+            R.STRIP_COIN_X, R.stripCoinY(view.safeTop),
+            { count: 9, stagger: 0.035, dur: 0.5, r: 13, spread: 150 });
+          save();
+        }
       } else if (b.id.startsWith('claim-')) {
         const q = meta.quests[+b.id.slice(6)];
         if (q && !q.claimed && META.questDone(meta, q)) {
@@ -1833,7 +1925,7 @@ function draw() {
     UI.pegboardWall(ctx, L.left, 0, L.right - L.left, L.h);
     game.scrollMax = Math.max(0, drawWorkshop(ctx, L, meta, game.scroll, button, game.time,
       game.wsIntro, !SDK.adsUsable(),
-      game.wsReturn === 'home' ? 'BACK TO MENU' : 'BACK TO CUTTING',
+      'BACK',
       // + safeBottom: in the CrazyGames app (fullscreen) the last card must scroll
       // clear of the iPhone home bar, not stop under it.
       view.safeTop) - L.h + 40 + view.safeBottom);
@@ -1849,7 +1941,7 @@ function draw() {
   }
   if (game.state === 'menu') {
     drawPauseMenu(ctx, L, meta, button, game.time, view, game.menuReturn === 'playing', isDev(),
-      META.dailyChestReady(meta), !SDK.adsUsable(), META.endlessUnlocked(meta));
+      game.menuReturn === 'home');
   }
 
   if (!SCROLL_SCREENS.has(game.state) && game.state !== 'menu' && game.state !== 'ad') drawMenuButton();
@@ -2183,8 +2275,8 @@ function drawComplete() {
   const nextGate = gates.find(([at, n]) => at > 0 && (n === 4 ? acc : score) < at);
   if (nextGate && accIn > 0.9) {
     const short = Math.round((nextGate[0] - (nextGate[1] === 4 ? acc : score)) * 100);
-    ctx.font = '700 19px CisBody, system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(236,220,190,0.8)';
+    ctx.font = '700 22px CisBody, system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(243,233,210,0.95)';
     const goal = nextGate[1] === 4 ? 'FLAWLESS' : `${nextGate[1]} stars`;
     ctx.fillText(short <= 0 ? '' : `${short}% short of ${goal}`, L.cx, my + mh + 30);
   }
@@ -2267,15 +2359,22 @@ function drawComplete() {
   // not find it. The results panel is where a player decides what to do next, so a
   // route to the level list belongs on it.
   if (btnGate(bi) > 0.05) {
-    const chestFlag = META.chestReady(meta) ? '  ●' : '';
-    const half = (bw - 14) / 2;
-    button('workshop', bx, cy, half, 66, `WORKSHOP${chestFlag}`, 'ghost', null, { pop: btnGate(bi) });
-    // Mid-run, the second slot is the way OUT of the run — banking the record is a
+    // Three across: BUILD, REWARDS, LEVELS. BUILD is here because the results panel
+    // is where a player actually is between boards - they rarely go back to the main
+    // menu, so a Build screen reachable only from there is a Build screen nobody sees
+    // (owner, 2026-10-04), and the rooms are the long-term reason to keep earning.
+    const third = (bw - 24) / 3;
+    const att = META.attention(meta);
+    button('menu-build', bx, cy, third, 66, 'BUILD', 'ghost', null,
+      { pop: btnGate(bi), badge: att.build });
+    button('workshop', bx + third + 12, cy, third, 66, 'REWARDS', att.claimable ? 'reward' : 'ghost', null,
+      { pop: btnGate(bi), badge: att.rewards });
+    // Mid-run, the last slot is the way OUT of the run — banking the record is a
     // decision the player has to be able to make between boards.
     if (game.endlessRun) {
-      button('end-run', bx + half + 14, cy, half, 66, 'END RUN', 'ghost', null, { pop: btnGate(bi) });
+      button('end-run', bx + (third + 12) * 2, cy, third, 66, 'END RUN', 'ghost', null, { pop: btnGate(bi) });
     } else {
-      button('menu-levels', bx + half + 14, cy, half, 66, 'LEVELS', 'ghost', null, { pop: btnGate(bi) });
+      button('menu-levels', bx + (third + 12) * 2, cy, third, 66, 'LEVELS', 'ghost', null, { pop: btnGate(bi) });
     }
   }
   ctx.restore();
@@ -2523,7 +2622,13 @@ function drawToast() {
     ctx.font = UI.F.marker(size);
   }
   const w = Math.min(maxW, ctx.measureText(game.toast).width + 64);
-  UI.tape(ctx, L.cx, L.h * 0.17 + 30, w, 60, -0.018, game.toast, { size });
+  // On the scrolling pages the top of the screen is the heading and the first card, so
+  // a toast there landed on top of exactly what the player was reading. It sits at
+  // the foot of those pages instead.
+  const ty = SCROLL_SCREENS.has(game.state)
+    ? L.h - 70 - view.safeBottom
+    : L.h * 0.17 + 30;
+  UI.tape(ctx, L.cx, ty, w, 60, -0.018, game.toast, { size });
   ctx.restore();
 }
 
@@ -2545,11 +2650,35 @@ function frame(now) {
     if (dt > MAX_FRAME) dt = MAX_FRAME;
     acc += dt;
     let guard = 0;
+    const cuts = [game.cut, game.homeBoard && game.homeBoard.cut];
+    const before = cuts.map((c) => (c ? c.s : 0));
+    let ticks = 0;
     while (acc >= TICK && guard++ < 240) {
       update(TICK);
       acc -= TICK;
+      ticks++;
     }
-    draw();
+    // Draw BETWEEN ticks. Logic runs at a fixed 120 Hz, which is right for physics but
+    // not for the picture: on a 144/165/180 Hz display some frames contain one tick
+    // and some none, so the board advanced on two frames out of three and the scroll
+    // juddered - which reads as a low frame rate on exactly the monitors that should
+    // look smoothest (owner's is 180 Hz). The board is therefore drawn where it WILL
+    // be, by carrying its last per-tick advance across the leftover fraction of a
+    // tick. Only the drawn position moves; game state stays on the fixed timestep.
+    const lead = [];
+    for (let i = 0; i < cuts.length; i++) {
+      const c = cuts[i];
+      if (!c) continue;
+      if (ticks > 0) c.__ds = (c.s - before[i]) / ticks;
+      const ds = (c.__ds || 0) * (acc / TICK);
+      // Never across a hand-over (new board, rewind after a continue) or a finished cut.
+      if (ds > 0 && ds < 12 && !c.done) { c.s += ds; lead.push([c, ds]); }
+    }
+    try {
+      draw();
+    } finally {
+      for (const [c, ds] of lead) c.s -= ds;
+    }
     frameErrors.streak = 0;
     // If the game recovered on its own, take the error notice back down — but only
     // after a sustained run of good frames, so a flickering fault can't strobe it.
@@ -2643,7 +2772,7 @@ function checkModules() {
     ['meta.js', META, ['createMeta', 'serialise', 'deserialise', 'rollStarChest', 'awardStarChest',
       'sawMods', 'buyUpgrade', 'toggleUpgrade', 'activeTier',
       'dailyChestReady', 'rollDailyChest', 'awardDailyChest',
-      'adGraceFor', 'touchLastPlayed']],
+      'adGraceFor', 'touchLastPlayed', 'checkAchievements', 'claimAchievement']],
     ['sdk.js', SDK, ['initSdk', 'showBanner', 'clearBanners', 'bannersAllowed', 'clearData',
       'applyAdGrace']],
     ['build.js', BUILD, ['createBuild', 'ensureProject', 'drawBuild', 'updateBuild']],
@@ -2892,6 +3021,10 @@ if (['localhost', '127.0.0.1'].includes(location.hostname)) {
         collect: CHEST.chestReadyToCollect(game.chestScene) }
     : null);
   window.__grant = (n) => { meta.coins += n; save(); };
+  window.__attention = () => META.attention(meta);
+  window.__badges = () => game.buttons.filter((b) => b.badge).map((b) => b.id);
+  window.__ach = () => ({ ach: { ...meta.ach }, stats: { ...meta.stats }, coins: meta.coins });
+  window.__scrollSet = (y) => { game.scroll = clamp(y, 0, game.scrollMax); };
   window.__dailyChest = () => ({
     ready: META.dailyChestReady(meta),
     date: meta.dailyChest.date,

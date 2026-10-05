@@ -509,6 +509,16 @@ Around those:Around those:
 - **Old Mac's Jobs** — three quests drawn from a template pool (cut N boards, N perfect turns, N odd finds, N 3-star cuts, reach an Nx combo). Claim for coins; the board re-rolls once all three are claimed.
 - **Daily Cut** — one date-seeded board per day, difficulty set above the player's current level, **one attempt** (a failed daily spends the day, and its failed panel offers BACK TO LEVEL n rather than a retry — it used to say RETRY LEVEL and quietly drop the player into the campaign), and a **seven-day streak LADDER** that resets on a missed day. The streak is measured from `meta.daily.last`, the last day a daily board was actually CUT; it was measured from a date stamped on every boot, so opening the game was enough to keep it. The streak pays: `dailyStreakMult` is `1 + 0.12 * min(streak, 7)`, applied to the daily board's whole payout and shown as its own results row, and **every seventh day also pays a chest** the player opens by hand. It used to be a number printed on a card that paid nothing, which is a statistic rather than a retention hook — and D1 retention is one of the three prime metrics. The Workshop card draws the ladder (rungs cut, today's rung pulsing, the seventh carrying a star) because a chain the player can SEE is a chain they do not want to break. The multiplier is deliberately modest: the daily is one board a day and must never become the only sensible way to earn.
 
+- **Achievements** (2026-10-04, `ACHIEVEMENTS` in `meta.js`, `drawAchievements` in `workshop.js`) —
+  27 named goals with a coin reward each (7,515 coins in all), on their own page reached from the
+  main menu and the pause menu. Defends playtime and D1: most are a few boards away from whatever
+  the player just did. Rules: every one is a pure function of saved state (`cur(meta)` vs `goal`),
+  so old saves are credited on load and nothing can drift; once earned it stays earned
+  (`meta.ach`, save v12) even if the stat falls (daily streak); the reward is CLAIMED on the page,
+  never paid silently — the menu button turns yellow with "N rewards to claim". Earning one shows
+  a toast. New stats for them: `perfectJumps`, `fails`, `chests`, `flawless`. When adding one, it
+  must be reachable by a stat the game really changes — add it to `tools/capture/play.js`.
+
 **Currency rule: coins must always have somewhere to go.** An earlier title in this studio shipped a currency that could not be spent on anything, and four review rounds never caught it because nothing crashes when a mechanic is merely pointless.
 
 ---
@@ -722,6 +732,12 @@ Poor onboarding · unclear objectives · unresponsive controls · inconsistent a
 ### Launch path
 **Basic Launch** (7–21 days, graduates at 7+ days AND 500+ plays): SDK optional, **ads disabled even if integrated**. Metrics measured are the three in §1.
 **Full Launch**: SDK mandatory, monetization enabled.
+**What decides it (docs.crazygames.com, checked 2026-10-01):** after 7 days AND 500+ plays,
+playtime, conversion and retention are benchmarked against other games on the platform. There is
+no published hard cutoff — the "strong game" numbers in §1 are the only figures given. All metrics
+at or above benchmark → invited to Full Launch. Some → may be invited to improve and run another
+Basic Launch. Most below → cannot proceed; resubmitting means submitting as a new game with
+significant improvements. The docs say nothing about delisting a game that stalls in Basic Launch.
 → ~~*We integrate the SDK from day one and let ads sit inert until Full Launch.*~~
 **WRONG (2026-09-28).** The portal's QA step inspects SDK usage and rejects a Basic
 Launch build that touches the ad module AT ALL — one `clearAllBanners()` produced "Ads
@@ -832,7 +848,7 @@ await SDK.user.getUser();
 **Audio is the primary moment-to-moment feedback channel:**
 - Blade whine pitch bends continuously with tracking error — the player hears accuracy before they see it.
 - Cutting texture noise layered under it, varying by wood species.
-- Rising combo chime while on the line; splinter crack when off.
+- ~~Rising combo chime while on the line~~ **removed 2026-10-04** (owner: a beep that never stops on a clean run). The combo-tier sounds still mark a streak; splinter crack when off.
 - Level complete: escalating star chimes, coin cascade.
 - Keep levels consistent and comfortable — imbalanced audio is a rejection trigger. Honour `SDK.game.settings.muteAudio` above the in-game toggle.
 
@@ -2305,3 +2321,75 @@ Two earlier games in this studio (Rush Hour Rampage, Tender Town) were built and
   grace expired, fail panel, daily chest, upgrades, workshop, pause): **zero calls**; a
   control call proved the spy records them. Also verified Firefox 155 (desktop + touch)
   plays, steers and has audio with zero errors.
+- 2026-10-01: §4 Launch path — recorded the three post-Basic-Launch outcomes (all / some / most metrics vs benchmark) from the CrazyGames docs; no hard numeric cutoff is published.
+- 2026-10-04: Basic Launch stats at 426 plays: desktop 5/15 (needs 9), mobile 3/15 — playtime 2m48s, D1 1.18%,
+  conversion 57.79% desktop / 23.33% mobile. Owner changes the same day: (1) removed the rising on-the-line
+  chime; (2) 3-2-1-GO runs at `COUNT_RATE` 2.2 (~1.7s, was 3.75s); (3) both store preview videos re-captured
+  at a true 60fps — the old screencast capture had ~25 unique fps while cutting and 10-15 in the menus. New
+  method: `tools/capture/` runs the game on a virtual clock (rAF + performance.now overridden, one screenshot
+  per 1/60s of game time) so smoothness no longer depends on render speed; `node tools/capture/capture.js`
+  (`VIEW=1080x1920` for portrait), needs the dev server; (4) Achievements page (§2 Meta systems), save v12;
+  (5) readability pass: Workshop/Saw body text 18-19px -> 21-22px and brightened, HUD SPLIT + location labels
+  larger and brighter, unfitted tier pips visible, toasts sit at the foot of scrolling pages instead of over
+  the heading, pause menu row pitch shrinks to fit (11 rows overflowed 1150). Verified by
+  `tools/capture/play.js` (real play-through: achievements earned by cutting, failing, jumping, opening a
+  chest, buying; claim by real click; persists across reload) at 1280x800 and 430x900, and menu-fit at six sizes.
+- 2026-10-04 (b): the continuous saw sound is quieter (owner: abrasive and annoying). `SAW_LEVEL` 0.5 on the motor
+  and cutting noise (~-6 dB), `WHINE_LEVEL` 0.32 on the whine (~-10 dB) in `audio.js`; pitch-bend-with-accuracy
+  unchanged. The "music sits ~9 dB under the running saw" figure in §6 is stale — music is now roughly level with it.
+- 2026-10-04 (c): "!" badges on menu buttons with something waiting (owner request). `META.attention(meta)` is the
+  one definition: ACHIEVEMENTS = a reward to claim; WORKSHOP = a job to claim, star chest ready, or today's Daily
+  Cut uncut; UPGRADE SAW = any tier affordable; BUILD = next part affordable. Shown on the home menu, pause menu,
+  the Workshop's OPEN BUILD / UPGRADES buttons, the results panel's WORKSHOP button and the HUD gear — but never
+  on the gear while a board is being cut. Drawn by `drawBadge` in main.js via a button's `badge` option (plain
+  fills, no shadowBlur). Replaces the old "●" suffix on the results WORKSHOP label. Test: `tools/capture/badge.js`.
+- 2026-10-04 (d): owner pass on menus and effects.
+  **Menus cut down** (supersedes the home/pause layouts and the separate Workshop + Achievements pages described
+  in §2): HOME is PLAY + a 2x2 grid (LEVELS, UPGRADES, BUILD, REWARDS) + ENDLESS only once unlocked (locked Endless
+  still shows at the foot of level select) + a small SETTINGS button — six buttons, was eleven controls. The
+  WORKSHOP page is now **REWARDS** (state still `workshop`): daily chest, star chest, Old Mac's jobs, Daily Cut,
+  then the achievements list; its duplicate Build / Levels / Saw / Settings cards are gone. SETTINGS (volume,
+  invert) is the pause panel opened from home (`menuReturn === 'home'`); mid-game the same panel is PAUSED:
+  RESUME, MAIN MENU, the same 2x2 grid, invert, volume. Every screen is still two taps from the cut.
+  **Badges**: the "!" is a turning red/gold starburst with a hopping mark; a badged button wiggles every ~2.3s
+  and has a breathing gold outline (`drawBadgeGlow`, strokes not blur). Every CLAIM / OPEN / Daily PLAY button
+  carries one. `META.attention` now returns `rewards`, `claimable`, `upgrades`, `build`.
+  **Tagline** is "Feed the board. Follow the line. Cut it clean." — "Don't split it" contradicted a game about
+  sawing a board in half. (The SPLIT damage meter keeps its name for now; same ambiguity, owner not yet asked.)
+  **Effect frame rate** — every per-frame shadowBlur in live drawing is gone: glow particles (halo square), coin
+  flights (one cached glow sprite; coins no longer spin), pop text ("NICE! 2x": rendered once to a sprite, was
+  re-stroked at a new scale each frame), the combo multiplier by the blade (sprite per multiplier), lit stars
+  (sprite per colour+size), level-select cell shadows. The Build screen's ghost layer is cached and rebuilt only
+  when a part is bought or the view changes (was two full-canvas passes per frame). Measured headless software
+  raster 1280x800@2: Build idle 19.5 -> 30 fps, Build purchase 16-17 -> 25 fps, level select 32 -> 33-40; cutting
+  and coin flights unchanged there (fill-rate bound; blur cost is a GPU-path cost this rig cannot see).
+  `tools/capture/perf.js` re-runs it. Remaining home/cut cost is the live board itself (`drawPlank`).
+  Preview videos re-captured (results button now reads REWARDS).
+- 2026-10-04 (e): **THE FRAME RATE BUG — the shipped Basic Launch build ran at ~20 fps on a real GPU.**
+  Measured on the owner's PC (RTX 5060 Ti, Chrome, 2560x1249 canvas, 180 Hz) with a real headed browser driven
+  from Windows node: home 21 fps, cutting 23-42 fps depending on the board, results 22. Ablation on that machine:
+  removing ONE call — `tileTexture`'s pattern fill — gave 180 fps. `boardPattern` built the CanvasPattern straight
+  from the JPEG `<img>` and its transform changes every frame; Chrome re-prepares the image for each fill. Fix:
+  the pattern is made from a CANVAS copy of the texture (last 4 kept, 2 MB each). After: **180 fps on every
+  screen**, p95 5.7 ms. Every earlier "48-60 fps" figure in this file was headless SOFTWARE raster, which does not
+  have this cost at all — so the 2026-09-26 switch to a pattern fill (made to cure the seam) regressed real
+  hardware badly and no test here could see it. **Rule: frame rate is measured on a real GPU in a headed browser
+  before shipping.** The rig is `%TEMP%\cis_perf\winperf.cjs` / `winablate.cjs` (copies in `tools/capture/`):
+  run with Windows `node` from a Windows cwd; it requires puppeteer-core over the `\\wsl.localhost` path, opens
+  Chrome maximised on the real monitor, and rewrites source via request interception for ablation.
+  This plausibly explains part of the Basic Launch playtime/conversion numbers.
+  Also: **the board is drawn between logic ticks** (`frame()` in main.js carries the last per-tick advance of
+  `cut.s` across the leftover fraction of a tick, then restores it). Logic is 120 Hz; at 144/165/180 Hz some
+  frames held no tick and the scroll juddered. State never leaves the fixed timestep.
+  **Gear = settings + quit only** (owner): PAUSED panel is RESUME, QUIT LEVEL, invert, volume — no links to
+  Rewards/Upgrades/Build, and the gear never carries a badge. Those screens are reached from the main menu and
+  the results panel. (Supersedes §2 "Discoverability — the gear is not optional" and its two-tap rule.)
+  **Faster and steeper** (owner): `BASE_SPEED` 250 -> 285; campaign curve `d = 30u + 4u^2` (was `22u + 12u^2`),
+  same ceiling of 34, more of it early (level 10: 2.1 -> 2.8, level 25: 6.0 -> 7.5, level 50: 13.8 -> 15.8).
+  This trades some of the conversion protection §2 describes for pace; it is the owner's call.
+- 2026-10-04 (f): the results panel's bottom row is BUILD | REWARDS | LEVELS (END RUN replaces LEVELS mid-Endless).
+  Owner: players rarely return to the main menu between boards, so a Build screen reachable only from there is
+  never seen — and the rooms are the long-term coin sink. BUILD carries the "!" badge when the next part is
+  affordable; `buildReturn` is `complete` so BACK lands on the results panel with NEXT LEVEL intact.
+  Test: `tools/capture/resbuild.js` (1280x800, 430x900, 800x450). UPGRADES is still main-menu only.
+

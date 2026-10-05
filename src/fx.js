@@ -228,6 +228,21 @@ export function updateMenuFx(fx, dt) {
 }
 
 // Drawn above panels but below buttons, so flying coins pass over the results card.
+let glowCv = null;
+function glowSprite() {
+  if (glowCv) return glowCv;
+  glowCv = document.createElement('canvas');
+  glowCv.width = glowCv.height = 96;
+  const g = glowCv.getContext('2d');
+  const gr = g.createRadialGradient(48, 48, 6, 48, 48, 48);
+  gr.addColorStop(0, 'rgba(255,214,110,0.75)');
+  gr.addColorStop(0.45, 'rgba(255,200,80,0.28)');
+  gr.addColorStop(1, 'rgba(255,200,80,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 96, 96);
+  return glowCv;
+}
+
 export function drawMenuFx(ctx, fx, drawCoinFn, drawStarFn, drawKeyFn, t) {
   ctx.save();
   for (const r of fx.rings) {
@@ -257,10 +272,13 @@ export function drawMenuFx(ctx, fx, drawCoinFn, drawStarFn, drawKeyFn, t) {
     const sc = 1 + Math.sin(u * Math.PI) * 0.35;
     ctx.save();
     ctx.translate(x, y);
-    ctx.rotate(u * 6 * (f.arc > 0 ? 1 : -1));
+    // Stars and keys tumble; a coin does not - its sprite has a lit side, and spinning
+    // that read as the coin flickering rather than turning.
+    if (f.kind !== 'coin') ctx.rotate(u * 6 * (f.arc > 0 ? 1 : -1));
     ctx.scale(sc, sc);
-    ctx.shadowColor = 'rgba(255,206,90,0.9)';
-    ctx.shadowBlur = 14;
+    // The glow is one pre-rendered sprite, not a shadowBlur per coin per frame.
+    const gl = glowSprite();
+    ctx.drawImage(gl, -f.r * 2.1, -f.r * 2.1, f.r * 4.2, f.r * 4.2);
     if (f.kind === 'star') drawStarFn?.(ctx, 0, 0, f.r, true, t);
     else if (f.kind === 'key') drawKeyFn?.(ctx, 0, 0, f.r);
     else drawCoinFn?.(ctx, 0, 0, f.r);
@@ -341,11 +359,15 @@ export function drawFx(ctx, fx) {
     const t = q.life / q.max;
     ctx.globalAlpha = Math.min(1, t * 1.8);
     ctx.fillStyle = `rgb(${q.r | 0},${q.g | 0},${q.b | 0})`;
+    // A glowing particle used to be drawn with shadowBlur, which is a blur pass PER
+    // PARTICLE per frame - a combo tier-up throws dozens and the frame rate fell over
+    // exactly when the game was congratulating the player (owner, 2026-10-04). The
+    // halo is a larger, fainter square under it instead: same read, no blur.
     if (q.glow) {
-      ctx.shadowColor = `rgb(${q.r | 0},${q.g | 0},${q.b | 0})`;
-      ctx.shadowBlur = 10;
-    } else {
-      ctx.shadowBlur = 0;
+      const a = ctx.globalAlpha;
+      ctx.globalAlpha = a * 0.28;
+      ctx.fillRect(q.x - q.size * 1.6, q.y - q.size * 1.6, q.size * 3.2, q.size * 3.2);
+      ctx.globalAlpha = a;
     }
     if (q.spin !== 0) {
       ctx.save();
@@ -360,6 +382,27 @@ export function drawFx(ctx, fx) {
   ctx.restore();
 }
 
+function popSprite(p) {
+  const c = document.createElement('canvas');
+  const g = c.getContext('2d');
+  const font = `900 ${p.size}px CisBody, system-ui, sans-serif`;
+  g.font = font;
+  const w = Math.ceil(g.measureText(p.text).width) + 24;
+  const h = Math.ceil(p.size * 1.5) + 16;
+  c.width = w * 2; c.height = h * 2;       // 2x, so it stays sharp when scaled up
+  g.scale(2, 2);
+  g.font = font;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.lineJoin = 'round';
+  g.lineWidth = 7;
+  g.strokeStyle = 'rgba(28,20,14,0.85)';
+  g.strokeText(p.text, w / 2, h / 2);
+  g.fillStyle = p.color;
+  g.fillText(p.text, w / 2, h / 2);
+  return c;
+}
+
 export function drawPops(ctx, fx) {
   ctx.save();
   ctx.textAlign = 'center';
@@ -372,12 +415,11 @@ export function drawPops(ctx, fx) {
     ctx.save();
     ctx.translate(p.x, p.y + rise);
     ctx.scale(scale, scale);
-    ctx.font = `900 ${p.size}px CisBody, system-ui, sans-serif`;
-    ctx.lineWidth = 7;
-    ctx.strokeStyle = 'rgba(28,20,14,0.85)';
-    ctx.strokeText(p.text, 0, 0);
-    ctx.fillStyle = p.color;
-    ctx.fillText(p.text, 0, 0);
+    // The text is rendered ONCE to a sprite and then only scaled. Stroking and
+    // filling it live meant the browser re-rasterised every glyph at a new size on
+    // every frame of the pop's scale animation, which is what made "NICE! 2x" stutter.
+    const sp = p.sprite || (p.sprite = popSprite(p));
+    ctx.drawImage(sp, -sp.width / 4, -sp.height / 4, sp.width / 2, sp.height / 2);
     ctx.restore();
   }
   ctx.restore();

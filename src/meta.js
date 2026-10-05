@@ -234,7 +234,12 @@ export function createMeta() {
     starsBanked: 0,            // toward the next chest
     lifetimeStars: 0,
     quests: [],
-    stats: { boards: 0, perfectTurns: 0, finds: 0, threeStars: 0, bestCombo: 1 },
+    // perfectJumps / fails / chests / flawless were added in save v12 for the
+    // achievements; older saves start them at zero.
+    stats: { boards: 0, perfectTurns: 0, finds: 0, threeStars: 0, bestCombo: 1,
+      perfectJumps: 0, fails: 0, chests: 0, flawless: 0 },
+    // Achievements: id -> 1 (earned, reward waiting) or 2 (reward claimed). Save v12.
+    ach: {},
     daily: { date: null, done: false, streak: 0, best: 0, last: null },
     // Free chest, one per local day. Separate from `daily` (the daily BOARD) on
     // purpose: a player who skips the challenge should still have a reason to open
@@ -433,7 +438,7 @@ export function awardDailyChest(meta, roll, d = new Date()) {
 
 export function serialise(meta) {
   return {
-    v: 11,
+    v: 12,
     coins: meta.coins,
     levelNum: meta.levelNum,
     stars: meta.stars,
@@ -448,6 +453,7 @@ export function serialise(meta) {
     lifetimeStars: meta.lifetimeStars,
     quests: meta.quests,
     stats: meta.stats,
+    ach: meta.ach,
     daily: meta.daily,
     dailyChest: meta.dailyChest,
     settings: meta.settings,
@@ -477,6 +483,7 @@ export function deserialise(meta, d) {
   meta.lifetimeStars = d.lifetimeStars | 0;
   meta.quests = Array.isArray(d.quests) ? d.quests : [];
   Object.assign(meta.stats, d.stats || {});
+  meta.ach = d.ach && typeof d.ach === 'object' ? d.ach : {};
   Object.assign(meta.daily, d.daily || {});
   // Pre-v7 saves have no daily chest; the defaults leave one waiting, which is the
   // right way round for a returning player.
@@ -497,6 +504,114 @@ export function deserialise(meta, d) {
   // them as "played just now" makes the very next session an ordinary one, which is
   // the correct reading of an existing player.
   meta.lastPlayedAt = typeof d.lastPlayedAt === 'number' ? d.lastPlayedAt : Date.now();
+}
+
+// --- Achievements -----------------------------------------------------------
+//
+// Added 2026-10-04 for playtime and D1: a list of named goals with a coin reward each,
+// most of them a few boards away from whatever the player has just done.
+//
+// Three rules:
+// - **Every achievement is a pure function of saved state** (`cur(meta)` against a
+//   `goal`). Nothing is tracked by a separate event counter that could drift from the
+//   stat it describes, so an old save is credited for what it already did the moment
+//   it loads.
+// - **Once earned it stays earned** (`meta.ach`), even where the stat behind it can
+//   fall again (a daily streak resets).
+// - **The reward is CLAIMED by the player on the Achievements page**, not paid
+//   silently - the claim is the reason to open the page.
+const partsFitted = (m) => PROJECTS.slice(0, m.projectIndex)
+  .reduce((n, p) => n + p.parts.length, 0) + m.partsBought;
+const topLevel = (m) => Object.keys(m.stars)
+  .reduce((n, k) => ((m.stars[k] || 0) > 0 ? Math.max(n, k | 0) : n), 0);
+const sawTiers = (m) => UPGRADE_IDS.reduce((n, id) => n + (m.upgrades[id] | 0), 0);
+const sawBest = (m) => UPGRADE_IDS.reduce((n, id) => Math.max(n, m.upgrades[id] | 0), 0);
+const flawlessCuts = (m) => Math.max(m.stats.flawless | 0, Object.keys(m.flawless).length);
+
+export const ACHIEVEMENTS = [
+  { id: 'first-cut', name: 'First Cut', desc: 'Cut your first board', goal: 1, reward: 25, cur: (m) => m.stats.boards },
+  { id: 'boards-10', name: 'Getting the Hang of It', desc: 'Cut 10 boards', goal: 10, reward: 80, cur: (m) => m.stats.boards },
+  { id: 'boards-50', name: 'Apprentice', desc: 'Cut 50 boards', goal: 50, reward: 300, cur: (m) => m.stats.boards },
+  { id: 'boards-150', name: 'Master Sawyer', desc: 'Cut 150 boards', goal: 150, reward: 800, cur: (m) => m.stats.boards },
+  { id: 'three-star', name: 'Clean Work', desc: 'Earn 3 stars on a board', goal: 1, reward: 40, cur: (m) => m.stats.threeStars },
+  { id: 'three-star-20', name: 'Showing Off', desc: 'Earn 3 stars on 20 boards', goal: 20, reward: 300, cur: (m) => m.stats.threeStars },
+  { id: 'stars-60', name: 'Star Collector', desc: 'Collect 60 stars', goal: 60, reward: 250, cur: (m) => m.lifetimeStars },
+  { id: 'flawless-1', name: 'Not a Splinter', desc: 'Cut a board FLAWLESS (100%)', goal: 1, reward: 200, cur: flawlessCuts },
+  { id: 'flawless-5', name: 'Purple Patch', desc: 'Cut 5 boards FLAWLESS', goal: 5, reward: 600, cur: flawlessCuts },
+  { id: 'combo-3', name: 'On a Roll', desc: 'Reach a 3x combo', goal: 3, reward: 50, cur: (m) => m.stats.bestCombo },
+  { id: 'combo-5', name: 'Red Hot', desc: 'Reach a 5x combo', goal: 5, reward: 250, cur: (m) => m.stats.bestCombo },
+  { id: 'finds-10', name: 'Finders Keepers', desc: 'Saw through 10 odd finds', goal: 10, reward: 80, cur: (m) => m.stats.finds },
+  { id: 'finds-60', name: 'Scrap Dealer', desc: 'Saw through 60 odd finds', goal: 60, reward: 350, cur: (m) => m.stats.finds },
+  { id: 'turns-10', name: 'Cutting Corners', desc: 'Nail 10 perfect turns', goal: 10, reward: 100, cur: (m) => m.stats.perfectTurns },
+  { id: 'turns-50', name: 'Corner Office', desc: 'Nail 50 perfect turns', goal: 50, reward: 400, cur: (m) => m.stats.perfectTurns },
+  { id: 'jump-1', name: 'Leap of Faith', desc: 'Land a perfect jump between boards', goal: 1, reward: 120, cur: (m) => m.stats.perfectJumps },
+  { id: 'chests-3', name: 'Treasure Hunter', desc: 'Open 3 chests', goal: 3, reward: 120, cur: (m) => m.stats.chests },
+  { id: 'fails-5', name: 'Firewood', desc: 'Ruin 5 boards. It happens.', goal: 5, reward: 60, cur: (m) => m.stats.fails },
+  { id: 'saw-1', name: 'Tool Time', desc: 'Fit your first saw upgrade', goal: 1, reward: 50, cur: sawTiers },
+  { id: 'saw-max', name: 'Fully Fitted', desc: 'Take any saw part to its top tier', goal: UPGRADE_TIERS, reward: 400, cur: sawBest },
+  { id: 'parts-1', name: 'Moving In', desc: 'Buy your first piece for the Build room', goal: 1, reward: 40, cur: partsFitted },
+  { id: 'room-1', name: 'Housewarming', desc: 'Finish a whole room', goal: 1, reward: 300, cur: (m) => m.completedProjects.length },
+  { id: 'daily-3', name: 'Regular', desc: 'Cut the Daily board 3 days running', goal: 3, reward: 250, cur: (m) => m.daily.streak },
+  { id: 'level-10', name: 'Warmed Up', desc: 'Finish level 10', goal: 10, reward: 100, cur: topLevel },
+  { id: 'level-25', name: 'Quarter Sawn', desc: 'Finish level 25', goal: 25, reward: 250, cur: topLevel },
+  { id: 'level-50', name: 'Halfway There', desc: 'Finish level 50', goal: 50, reward: 500, cur: topLevel },
+  { id: 'level-100', name: 'Cut It Straight', desc: 'Finish all 100 levels', goal: 100, reward: 1500, cur: topLevel },
+];
+
+export function achProgress(meta, a) {
+  if (meta.ach[a.id]) return a.goal;
+  return Math.max(0, Math.min(a.goal, a.cur(meta) | 0));
+}
+
+// Marks anything newly earned and returns those achievements, so the caller can
+// announce them. Cheap enough to run on every save.
+export function checkAchievements(meta) {
+  const fresh = [];
+  for (const a of ACHIEVEMENTS) {
+    if (!meta.ach[a.id] && (a.cur(meta) | 0) >= a.goal) { meta.ach[a.id] = 1; fresh.push(a); }
+  }
+  return fresh;
+}
+
+export function achClaimable(meta) {
+  return ACHIEVEMENTS.filter((a) => meta.ach[a.id] === 1).length;
+}
+
+export function achEarned(meta) {
+  return ACHIEVEMENTS.filter((a) => meta.ach[a.id]).length;
+}
+
+// Pays the reward once. Returns the coins paid, or 0 if there was nothing to claim.
+export function claimAchievement(meta, id) {
+  const a = ACHIEVEMENTS.find((x) => x.id === id);
+  if (!a || meta.ach[id] !== 1) return 0;
+  meta.ach[id] = 2;
+  meta.coins += a.reward;
+  return a.reward;
+}
+
+// What is waiting for the player behind each menu button, so the button can carry a
+// "!" badge (owner, 2026-10-04: a reward nobody knows about is a reward nobody
+// collects). One function, so the home menu, the pause menu, the gear and the results
+// panel can never disagree about what counts as "something waiting".
+export function attention(meta) {
+  const part = nextPart(meta);
+  // Something that pays out the moment it is tapped.
+  const claimable = achClaimable(meta) > 0
+    || meta.quests.some((q) => !q.claimed && questDone(meta, q))
+    || chestReady(meta) || dailyChestReady(meta);
+  const a = {
+    claimable,
+    // The REWARDS page: anything claimable, or today's Daily Cut still uncut.
+    rewards: claimable || !meta.daily.done,
+    upgrades: UPGRADE_IDS.some((id) => {
+      const c = upgradeCost(meta, id);
+      return c != null && meta.coins >= c;
+    }),
+    build: !!part && meta.coins >= part.cost,
+  };
+  a.any = a.rewards || a.upgrades || a.build;
+  return a;
 }
 
 // --- Endless ---------------------------------------------------------------

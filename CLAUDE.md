@@ -56,6 +56,17 @@ lamp's actual position over the blade, so a lighting fault only shows when the s
 is compared at several angles; it was written after the previous set shipped as unlit flat
 vector cartoons that read as clipart against the photographic wood.
 
+**Preview videos** are captured with `node tools/capture/capture.js` (landscape; `VIEW=1080x1920` for
+portrait) against the running dev server — a virtual clock makes them a true 60fps. `node tools/capture/play.js`
+is the headless play-through regression (achievements, count-in, screenshots). Both borrow puppeteer-core
+from the Rush Hour Rampage folder; nothing is installed here.
+
+**Measure frame rate on the REAL GPU, never headless.** Headless Chrome here is software raster and hid a bug
+that ran the shipped game at ~20 fps on an RTX card (a pattern fill built from an `<img>`; guidelines changelog
+2026-10-04 (e)). Copy `tools/capture/winperf.cjs` to a Windows folder and run it with Windows `node` (`cmd.exe /c
+"node winperf.cjs"` from a `/mnt/c/...` cwd): it opens headed Chrome on the real monitor and prints fps per screen.
+`winablate.cjs` removes one draw call at a time. Expect ~180 fps everywhere on the owner's PC.
+
 `submission/` holds the store assets and must **not** ship inside the game bundle.
 
 **The UI style is "workshop materials"** (2026-09-28, `src/ui.js`, guidelines §6): plywood

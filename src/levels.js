@@ -216,7 +216,10 @@ function materialForRaw(n) {
 export function difficultyFor(n) {
   const breather = n % 5 === 0 && n > 4;
   const u = clamp((n - 1) / (LEVEL_COUNT - 1), 0, 1);
-  const raw = 22 * u + 12 * u * u;
+  // Owner, 2026-10-04: ramp up a little quicker. Same ceiling (34 at level 100), but
+  // more of it arrives early: 30u + 4u^2 against the old 22u + 12u^2 puts level 10 at
+  // d 2.8 (was 2.1), level 25 at 7.5 (was 6.0) and level 50 at 15.8 (was 13.8).
+  const raw = 30 * u + 4 * u * u;
   return { breather, d: breather ? Math.max(0, raw - 1.6) : raw };
 }
 
@@ -249,7 +252,8 @@ export function levelPreview(n) {
 // is now a GIMMICK (see GIMMICKS below): a level is fast because it announced itself as
 // a fast level, not because the player has been playing for twenty minutes. Endless
 // keeps its own speed axis, because there the player picks it.
-export const BASE_SPEED = 250;
+// 250 until 2026-10-04; the owner asked for the boards to feed a little faster.
+export const BASE_SPEED = 285;
 
 function paramsFor(d) {
   return {

@@ -8,6 +8,7 @@
 import { roundRect, drawCoin, drawStar, textureImage, ensureTexture } from './render.js';
 import * as UI from './ui.js';
 import { levelPreview, LEVEL_COUNT, ENDLESS_SPEEDS, ENDLESS_LINES, endlessPayMult } from './levels.js';
+import { ACHIEVEMENTS, achClaimable, achEarned, attention } from './meta.js';
 
 const W = 720;
 
@@ -38,13 +39,11 @@ export function drawHomeMenu(ctx, L, meta, button, t, view, opts) {
   const H_ROW = 88;
   const H_GRID = 86;
   const GAP = 14;
+  const H_SET = 62;
   let total = H_HEAD + H_PLAY + GAP;
-  if (dailyChest) total += H_ROW + GAP;
-  total += H_ROW + GAP;                 // endless
   total += (H_GRID + GAP) * 2;          // 2x2 grid
-  total += 66 + GAP;                    // SFX + MUSIC sliders
-  total += 58;                          // invert
-  if (dev) total += 66 + GAP;
+  if (endless) total += H_ROW + GAP;
+  total += H_SET;
 
   let y = Math.max(view.safeTop + 24, (L.h - total) / 2 - 20);
 
@@ -65,7 +64,7 @@ export function drawHomeMenu(ctx, L, meta, button, t, view, opts) {
   // A stencilled plank sign rather than gradient-filled outlined text — the old
   // treatment was the generic "game title" look.
   UI.plankSign(ctx, L.cx, y + 42, 560, 92, 'CUT IT STRAIGHT', 66);
-  UI.tape(ctx, L.cx + 40, y + 102, 470, 36, 0.012, 'Feed the board. Follow the line. Don\u2019t split it.',
+  UI.tape(ctx, L.cx + 40, y + 102, 470, 36, 0.012, 'Feed the board. Follow the line. Cut it clean.',
     { size: 19 });
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -101,46 +100,39 @@ export function drawHomeMenu(ctx, L, meta, button, t, view, opts) {
 
   // PLAY is deliberately the only tall button on the screen. One tap from launch to
   // cutting is the platform's limit and the top-converting shape.
+  //
+  // The rest of the menu is SIX buttons at most (owner, 2026-10-04: there were eleven
+  // controls here and it read as a wall). Everything is still reachable:
+  //   LEVELS      level select, with locked Endless at its foot
+  //   UPGRADES    the saw
+  //   BUILD       the rooms
+  //   REWARDS     daily chest, Daily Cut, star chest, Old Mac's jobs, achievements
+  //   ENDLESS     only once it is unlocked
+  //   SETTINGS    volume, steering
   const playLabel = maxLevel > 1 ? `PLAY  \u00b7  LEVEL ${Math.min(levelNum, LEVEL_COUNT)}` : 'PLAY';
   button('home-play', px, y, pw, H_PLAY, playLabel, 'primary',
     maxLevel > 1 ? 'Carry on where you left off' : 'Follow the line with the saw');
   y += H_PLAY + GAP;
 
-  if (dailyChest) {
-    button('daily-chest', px, y, pw, H_ROW, 'DAILY FREE CHEST', 'reward',
-      adFree ? 'Coins and a key, once a day' : '\u25b6 Watch a short ad');
-    y += H_ROW + GAP;
-  }
+  // A "!" badge on any button with something waiting behind it - see META.attention.
+  const att = attention(meta);
+  const half = (pw - GAP) / 2;
+  button('menu-levels', px, y, half, H_GRID, 'LEVELS', 'ghost');
+  button('menu-upgrades', px + half + GAP, y, half, H_GRID, 'UPGRADES', 'ghost', null,
+    { badge: att.upgrades });
+  y += H_GRID + GAP;
+  button('menu-build', px, y, half, H_GRID, 'BUILD', 'ghost', null, { badge: att.build });
+  button('menu-workshop', px + half + GAP, y, half, H_GRID, 'REWARDS',
+    att.claimable ? 'reward' : 'ghost', null, { badge: att.rewards });
+  y += H_GRID + GAP;
 
   if (endless) {
     button('home-endless', px, y, pw, H_ROW, 'ENDLESS MODE', 'reward',
       'Pick your own speed and line');
-  } else {
-    // Shown locked rather than hidden: a mode the player cannot see is a mode that
-    // does not pull them through the campaign.
-    button('home-endless', px, y, pw, H_ROW, 'ENDLESS MODE', 'locked',
-      `Finish all ${LEVEL_COUNT} levels to unlock`);
+    y += H_ROW + GAP;
   }
-  y += H_ROW + GAP;
 
-  const half = (pw - GAP) / 2;
-  button('menu-levels', px, y, half, H_GRID, 'LEVEL SELECT', 'ghost');
-  button('menu-upgrades', px + half + GAP, y, half, H_GRID, 'UPGRADE SAW', 'ghost');
-  y += H_GRID + GAP;
-  button('menu-build', px, y, half, H_GRID, 'BUILD', 'ghost');
-  button('menu-workshop', px + half + GAP, y, half, H_GRID, 'WORKSHOP', 'ghost');
-  y += H_GRID + GAP;
-
-  // Two volume sliders instead of one SOUND ON/OFF (owner, 2026-09-28: the music was
-  // drowning the effects, and on/off could not fix that).
-  volumeSliders(button, meta, px, y, pw, 66, GAP);
-  y += 66 + GAP;
-  const inv = !!meta.settings.invert;
-  button('toggle-invert', px, y, pw, 58, `INVERT STEERING: ${inv ? 'ON' : 'OFF'}`,
-    inv ? 'primary' : 'ghost');
-  y += 58 + GAP;
-
-  if (dev) button('dev-reset', px, y, pw, 66, 'DEV: RESET PROGRESS', 'ghost');
+  button('home-settings', px + pw / 4, y, pw / 2, H_SET, 'SETTINGS', 'ghost', null, { small: true });
 }
 
 // SFX and MUSIC side by side. Registered as buttons carrying `slider`, so they get
@@ -243,13 +235,19 @@ export function drawEndlessSetup(ctx, L, meta, button, t, view, sel) {
   button('endless-back', px, y, pw, 70, 'BACK', 'ghost');
 }
 
-export function drawPauseMenu(ctx, L, meta, button, t, view, canResume, dev,
-                              dailyChest = false, adFree = false, endless = false) {
+export function drawPauseMenu(ctx, L, meta, button, t, view, canResume, dev, fromHome = false) {
   const pw = W - 120;
   const px = (W - pw) / 2;
-  const rows = (canResume ? 8 : 7) + (dev ? 1 : 0) + (dailyChest ? 1 : 0) + (endless ? 1 : 0);
-  const ph = 116 + rows * 92 + 30;
-  const py = Math.max(60, (L.h - ph) / 2);
+  // One panel, two entrances. From the main menu it is SETTINGS: volume, steering,
+  // back. From the gear during play it is the same settings plus the two things a
+  // paused player needs - RESUME and a way out of the level. It deliberately does NOT
+  // link to Rewards, Upgrades or Build (owner, 2026-10-04: the gear is for settings and
+  // quitting, not a second main menu); those are one tap further, on the main menu.
+  const rows = (fromHome ? 3 : 3 + (canResume ? 1 : 0)) + (dev ? 1 : 0);
+  const PITCH = Math.min(92, Math.floor((L.h - view.safeTop - 40 - 146) / rows));
+  const RH = PITCH - 14;
+  const ph = 116 + rows * PITCH + 30;
+  const py = Math.max(view.safeTop + 20, (L.h - ph) / 2);
 
   UI.pegboardWall(ctx, L.left, 0, L.right - L.left, L.h);
   ctx.save();
@@ -259,7 +257,7 @@ export function drawPauseMenu(ctx, L, meta, button, t, view, canResume, dev,
   ctx.textBaseline = 'middle';
   ctx.font = UI.F.stencil(44);
   ctx.fillStyle = '#ffd873';
-  ctx.fillText('MENU', L.cx, py + 52);
+  ctx.fillText(fromHome || !canResume ? 'SETTINGS' : 'PAUSED', L.cx, py + 52);
 
   ctx.font = '800 24px CisBody, system-ui, sans-serif';
   ctx.textAlign = 'left';
@@ -274,44 +272,33 @@ export function drawPauseMenu(ctx, L, meta, button, t, view, canResume, dev,
   const bw = pw - 68, bx = px + 34;
   let by = py + 126;
   const row = (id, label, style, sub) => {
-    button(id, bx, by, bw, 78, label, style, sub);
-    by += 92;
+    button(id, bx, by, bw, RH, label, style, sub);
+    by += PITCH;
   };
 
-  if (canResume) row('resume', 'RESUME', 'primary');
-  // The daily chest sits at the top of the menu on the day it is available and
-  // vanishes once claimed, so the gear is worth opening every session rather than
-  // only when something is wrong. Two taps from the cut, per §2.
-  if (dailyChest) {
-    row('daily-chest', 'DAILY FREE CHEST', 'reward',
-      adFree ? 'Coins and a key, once a day' : '▶ Watch a short ad');
+  if (!fromHome) {
+    if (canResume) row('resume', 'RESUME', 'primary');
+    row('menu-home', canResume ? 'QUIT LEVEL' : 'MAIN MENU', 'ghost',
+      canResume ? 'Back to the main menu' : null);
   }
-  // MAIN MENU is a row and not a corner glyph: it is the screen every other screen
-  // is reachable from, so it must be findable from the one menu that opens mid-cut.
-  row('menu-home', 'MAIN MENU', 'ghost');
-  row('menu-levels', 'LEVEL SELECT', 'ghost');
-  if (endless) row('home-endless', 'ENDLESS MODE', 'reward');
-  row('menu-build', 'BUILD', 'reward');
-  row('menu-upgrades', 'UPGRADE THE SAW', 'ghost');
-  row('menu-workshop', 'WORKSHOP', 'ghost');
 
-  // The invert toggle lives here, in plain sight, rather than at the bottom of a
-  // scrolling shop page.
   const inv = !!meta.settings.invert;
-  button('toggle-invert', bx, by, bw, 78,
+  button('toggle-invert', bx, by, bw, RH,
     `INVERT STEERING: ${inv ? 'ON' : 'OFF'}`, inv ? 'primary' : 'ghost',
     inv ? 'Drag left moves the board left' : 'Drag left moves the board right');
-  by += 92;
+  by += PITCH;
 
-  volumeSliders(button, meta, bx, by, bw, 78, 14);
-  by += 92;
+  volumeSliders(button, meta, bx, by, bw, RH, 14);
+  by += PITCH;
 
   // Only on localhost / the local SDK environment. Same gate as the ad skip, so it
   // cannot reach the hosted build.
   if (dev) {
-    button('dev-reset', bx, by, bw, 78, 'DEV: RESET PROGRESS', 'ghost',
+    button('dev-reset', bx, by, bw, RH, 'DEV: RESET PROGRESS', 'ghost',
       'Wipes coins, levels, upgrades and builds');
+    by += PITCH;
   }
+  if (fromHome) button('resume', bx, by, bw, RH, 'BACK', 'primary');
 }
 
 // --- Level select ----------------------------------------------------------
@@ -358,10 +345,12 @@ export function drawLevelSelect(ctx, L, meta, scroll, button, t, view, maxLevel,
 
     // Each level is an offcut of the board it is cut from, so the grid reads as a
     // stack of real timber — and shows off the board variety the campaign has.
+    // A hard offset shadow, not a blurred one: there are up to 28 cells on screen and
+    // a shadowBlur each, every frame, is what made this list scroll badly.
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.55)';
-    ctx.shadowBlur = 8;
-    ctx.shadowOffsetY = 4;
+    ctx.fillStyle = 'rgba(0,0,0,0.38)';
+    roundRect(ctx, cx + 2, cy + 5, CELL, CELL, 5);
+    ctx.fill();
     ctx.fillStyle = '#3a2616';
     roundRect(ctx, cx, cy, CELL, CELL, 5);
     ctx.fill();
@@ -407,11 +396,10 @@ export function drawLevelSelect(ctx, L, meta, scroll, button, t, view, maxLevel,
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = UI.F.body(800, 15);
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillText(prev.material.toUpperCase(), cx + CELL / 2 + 1, cy + 87.5);
     ctx.fillStyle = locked ? 'rgba(236,224,200,0.4)' : '#f6eedb';
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur = 4;
     ctx.fillText(prev.material.toUpperCase(), cx + CELL / 2, cy + 86);
-    ctx.shadowColor = 'transparent';
     if (locked) UI.padlock(ctx, cx + CELL / 2, cy + 110, 1, 'rgba(236,224,200,0.6)');
     else {
       // A flawless cut earns a 4th, purple star — the same one the results panel

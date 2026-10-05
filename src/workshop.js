@@ -13,6 +13,7 @@ import {
   currentProject, nextPart, questProgress, questDone, chestReady, dailyChestReady,
   upgradeTier, upgradeCost, canAdFit, upgradeEnabled,
   DAILY_STREAK_LEN, dailyStreakMult,
+  ACHIEVEMENTS, achProgress, achEarned, attention,
 } from './meta.js';
 
 const W = 720;
@@ -50,11 +51,11 @@ function card(ctx, x, y, w, h, title) {
 // Shrinks a size or two before it will cut a word off: these lines are the only
 // place a helper's actual effect is explained, so losing the end of the sentence
 // ("use it into a hard corner") costs more than a point of type size.
-function clipText(ctx, text, x, y, max, size = 19, weight = 700) {
+function clipText(ctx, text, x, y, max, size = 22, weight = 700) {
   let px = size;
   const set = () => { ctx.font = `${weight} ${px}px CisBody, system-ui, sans-serif`; };
   set();
-  while (px > 15 && ctx.measureText(text).width > max) { px -= 1; set(); }
+  while (px > 17 && ctx.measureText(text).width > max) { px -= 1; set(); }
   let t = text;
   if (ctx.measureText(t).width > max) {
     while (t.length > 1 && ctx.measureText(`${t}…`).width > max) t = t.slice(0, -1);
@@ -93,41 +94,12 @@ export function drawWorkshop(
 
   // Header
   ctx.textAlign = 'center';
-  UI.tape(ctx, W / 2, y + 26, 300, 62, -0.015, 'WORKSHOP', { font: UI.F.stencil(44), ink: '#2a1a0c' });
+  UI.tape(ctx, W / 2, y + 26, 300, 62, -0.015, 'REWARDS', { font: UI.F.stencil(44), ink: '#2a1a0c' });
   y += 66;
 
   // The coin / star / key row used to live here, in the scrolling column. It is now
   // PINNED to the top of the screen by main.js (R.drawCurrencyStrip) — see the comment
   // there for why. The column is inset below it instead (stripInset).
-
-  // --- Build project. The card is a preview; the Build screen is the real thing.
-  const proj = currentProject(meta);
-  const part = nextPart(meta);
-  const ch = 268;
-  card(ctx, x, y, w, ch, 'Build');
-  drawProjectBadge(ctx, x + 116, y + 142, 186, proj.id, meta.partsBought);
-
-  ctx.textAlign = 'left';
-  ctx.font = UI.F.stencil(32);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(proj.name, x + 226, y + 74);
-
-  ctx.font = '700 21px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(236,220,190,0.75)';
-  ctx.fillText(`${meta.partsBought} / ${proj.parts.length} parts`, x + 226, y + 108);
-  bar(ctx, x + 226, y + 126, w - 260, 12, meta.partsBought / proj.parts.length, '#63e08a');
-
-  if (part) {
-    ctx.font = '700 23px CisBody, system-ui, sans-serif';
-    ctx.fillStyle = '#f3e9d2';
-    ctx.fillText(`Next: ${part.name}`, x + 226, y + 162);
-  } else {
-    ctx.font = '800 24px CisBody, system-ui, sans-serif';
-    ctx.fillStyle = '#63e08a';
-    ctx.fillText('Complete!', x + 226, y + 162);
-  }
-  button('open-build', x + 226, y + 186, w - 260, 58, 'OPEN BUILD', 'primary');
-  y += ch + 16;
 
   // --- Daily free chest. Placed ABOVE the star chest because it is the one card
   // that expires: it is the reason to open the game tomorrow, and a return hook
@@ -139,31 +111,16 @@ export function drawWorkshop(
     ctx.font = '800 25px CisBody, system-ui, sans-serif';
     ctx.fillStyle = '#ffd23f';
     ctx.fillText('Free chest is waiting', x + 22, y + 66);
-    ctx.font = '700 19px CisBody, system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(232,214,182,0.7)';
+    ctx.font = '700 22px CisBody, system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(240,226,198,0.92)';
     clipText(ctx, 'Coins and a key. One a day.', x + 22, y + 94, w - 262);
     // adFree is decided by main.js from the SDK: with ads unavailable the chest is
     // still given, it just stops claiming an ad is coming. A rewarded button that
     // cannot run an ad is an explicit CrazyGames violation (§3, Adblock).
     button('daily-chest', x + w - 238, y + 40, 216, 66, 'OPEN', 'reward',
-      adFree ? null : '▶ Watch a short ad');
+      adFree ? null : '▶ Watch a short ad', { badge: true });
     y += dch + 16;
   }
-
-  // --- Levels. Level select used to live only behind the gear, which the owner went
-  // looking for and could not find. It is a place you go, so it gets a card here as
-  // well as a row on the pause menu and a button on the results panel.
-  const lvh = 112;
-  card(ctx, x, y, w, lvh, 'Levels');
-  ctx.textAlign = 'left';
-  ctx.font = '800 25px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = '#f3e9d2';
-  ctx.fillText(`Level ${meta.levelNum}`, x + 22, y + 62);
-  ctx.font = '700 19px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(232,214,182,0.7)';
-  clipText(ctx, 'Replay any board you have reached.', x + 22, y + 90, w - 246);
-  button('menu-levels', x + w - 206, y + 40, 184, 58, 'LEVEL SELECT', 'primary');
-  y += lvh + 16;
 
   // --- Star chest
   const chh = 118;
@@ -175,7 +132,7 @@ export function drawWorkshop(
   ctx.fillText(`${meta.starsBanked} / ${STARS_PER_CHEST} stars`, x + 22, y + 66);
   bar(ctx, x + 22, y + 86, w - 220, 14, f, '#ffd23f');
   if (chestReady(meta)) {
-    button('open-chest', x + w - 182, y + 44, 160, 56, 'OPEN', 'reward');
+    button('open-chest', x + w - 182, y + 44, 160, 56, 'OPEN', 'reward', null, { badge: true });
   }
   y += chh + 16;
 
@@ -191,8 +148,8 @@ export function drawWorkshop(
     ctx.font = '700 22px CisBody, system-ui, sans-serif';
     ctx.fillStyle = q.claimed ? 'rgba(140,160,175,0.6)' : '#f3e9d2';
     ctx.fillText(q.text, x + 22, qy + 14);
-    ctx.font = '700 19px CisBody, system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(232,214,182,0.7)';
+    ctx.font = '700 22px CisBody, system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(240,226,198,0.92)';
     ctx.fillText(`${prog}/${q.target}`, x + 22, qy + 40);
     bar(ctx, x + 92, qy + 33, w - 300, 10, prog / q.target, done ? '#63e08a' : '#5fb9e8');
     if (q.claimed) {
@@ -200,7 +157,8 @@ export function drawWorkshop(
       ctx.fillStyle = 'rgba(140,160,175,0.7)';
       ctx.fillText('CLAIMED', x + w - 24, qy + 26);
     } else if (done) {
-      button(`claim-${i}`, x + w - 176, qy - 2, 154, 52, `${q.reward}`, 'reward', null, { coin: true });
+      button(`claim-${i}`, x + w - 176, qy - 2, 154, 52, `${q.reward}`, 'reward', null,
+        { coin: true, badge: true });
     } else {
       ctx.textAlign = 'right';
       ctx.font = '800 21px CisBody, system-ui, sans-serif';
@@ -210,26 +168,6 @@ export function drawWorkshop(
     qy += 66;
   }
   y += qh + 16;
-
-  // --- Saw upgrades. A preview card only; the real screen is two taps from the cut
-  // (gear -> UPGRADES), because a feature further away than that does not exist.
-  const uh = 150;
-  card(ctx, x, y, w, uh, 'The Saw');
-  const fitted = UPGRADE_IDS.reduce((a, id) => a + upgradeTier(meta, id), 0);
-  const maxFitted = UPGRADE_IDS.length * UPGRADE_TIERS;
-  ctx.textAlign = 'left';
-  ctx.font = '800 25px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = '#f3e9d2';
-  ctx.fillText('Upgrade the machine', x + 22, y + 64);
-  ctx.font = '700 19px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(232,214,182,0.7)';
-  clipText(ctx, 'Eight parts. Each changes how the saw plays.', x + 22, y + 92, w - 246);
-  bar(ctx, x + 22, y + 112, w - 44, 12, fitted / maxFitted, '#9fe8ff');
-  ctx.font = '700 18px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(232,214,182,0.7)';
-  ctx.fillText(`${fitted} / ${maxFitted} parts fitted`, x + 22, y + 136);
-  button('open-upgrades', x + w - 206, y + 44, 184, 58, 'UPGRADES', 'primary');
-  y += uh + 16;
 
   // --- Daily challenge.
   //
@@ -274,41 +212,26 @@ export function drawWorkshop(
     }
     ctx.globalAlpha = 1;
     ctx.textAlign = 'center';
-    ctx.font = '900 19px CisBody, system-ui, sans-serif';
+    ctx.font = '900 22px CisBody, system-ui, sans-serif';
     ctx.fillStyle = done ? '#2a1606' : isToday ? '#ffe9a8' : 'rgba(232,214,182,0.5)';
     // The seventh rung is the chest day and says so, in the one character that reads
     // at this size.
     ctx.fillText(last ? '\u2605' : `${i + 1}`, rx + rungW / 2, ly + 23);
   }
   ctx.textAlign = 'left';
-  ctx.font = '700 19px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(232,214,182,0.75)';
+  ctx.font = '700 22px CisBody, system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(240,226,198,0.92)';
   const mult = dailyStreakMult(streak + (meta.daily.done ? 0 : 1));
   ctx.fillText(meta.daily.done
     ? `${streak} day streak \u00b7 keep it alive tomorrow`
     : `${streak} day streak \u00b7 today pays ${mult.toFixed(2)}x`, x + 22, ly + 66);
   if (!meta.daily.done) {
-    button('daily', x + w - 200, y + 40, 178, 60, 'PLAY', 'reward');
+    button('daily', x + w - 200, y + 40, 178, 60, 'PLAY', 'reward', null, { badge: true });
   }
   y += dh + 20;
 
-  // --- Settings
-  // Volume lives here too (owner, 2026-09-28): Settings is where a player looks for it,
-  // and the home menu is the only other place outside the pause menu that had it.
-  const sh = 212;
-  card(ctx, x, y, w, sh, 'Settings');
+  y = achievementCards(ctx, L, meta, button, x, y, w) + 8;
   ctx.textAlign = 'left';
-  ctx.font = '800 23px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = '#f3e9d2';
-  ctx.fillText('Invert steering', x + 22, y + 68);
-  const on = !!meta.settings.invert;
-  ctx.font = '700 19px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(232,214,182,0.7)';
-  ctx.fillText(on ? 'Drag left moves the board left' : 'Drag left moves the board right', x + 22, y + 94);
-  button('toggle-invert', x + w - 176, y + 44, 154, 56, on ? 'ON' : 'OFF',
-    on ? 'primary' : 'ghost');
-  volumeSliders(button, meta, x + 22, y + 124, w - 44, 66, 14);
-  y += sh + 16;
 
   // The label has to name where BACK actually goes: the Workshop is reachable from
   // the results panel, the pause menu and the main menu, and "BACK TO CUTTING" is a
@@ -348,7 +271,7 @@ export function drawUpgrades(ctx, L, meta, scroll, button, t, intro = 1, safeTop
   UI.tape(ctx, W / 2, y + 26, 250, 62, -0.015, 'THE SAW', { font: UI.F.stencil(44), ink: '#2a1a0c' });
   y += 56;
   ctx.font = '700 21px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(232,214,182,0.7)';
+  ctx.fillStyle = 'rgba(240,226,198,0.92)';
   ctx.fillText('Every part changes how it plays. None of it is paint.', W / 2, y + 10);
   y += 38;
 
@@ -365,8 +288,8 @@ export function drawUpgrades(ctx, L, meta, scroll, button, t, intro = 1, safeTop
     ctx.font = '900 25px CisBody, system-ui, sans-serif';
     ctx.fillStyle = 'rgba(226,206,172,0.9)';
     ctx.fillText(grp.title, x + 4, y + 16);
-    ctx.font = '700 19px CisBody, system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(214,190,152,0.8)';
+    ctx.font = '700 22px CisBody, system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(240,226,198,0.92)';
     ctx.fillText(grp.sub, x + 4, y + 42);
     y += 62;
 
@@ -391,7 +314,7 @@ export function drawUpgrades(ctx, L, meta, scroll, button, t, intro = 1, safeTop
       for (let i = 0; i < UPGRADE_TIERS; i++) {
         const px = x + 22 + i * 26;
         // Dabs of the part's own paint colour, one per tier fitted.
-        ctx.fillStyle = i < tier ? (on ? u.colour : 'rgba(236,224,200,0.35)') : 'rgba(0,0,0,0.3)';
+        ctx.fillStyle = i < tier ? (on ? u.colour : 'rgba(236,224,200,0.35)') : 'rgba(243,233,210,0.2)';
         roundRect(ctx, px, y + 52, 20, 12, 2);
         ctx.fill();
       }
@@ -402,15 +325,15 @@ export function drawUpgrades(ctx, L, meta, scroll, button, t, intro = 1, safeTop
       ctx.beginPath();
       ctx.rect(x + 16, y + 68, w - 196, 92);
       ctx.clip();
-      ctx.font = '700 19px CisBody, system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(232,214,182,0.7)';
+      ctx.font = '700 22px CisBody, system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(240,226,198,0.92)';
       ctx.fillText(u.blurb, x + 22, y + 88);
 
-      ctx.font = '800 19px CisBody, system-ui, sans-serif';
-      ctx.fillStyle = tier === 0 ? 'rgba(226,206,172,0.8)' : on ? '#8fe87c' : 'rgba(214,190,152,0.7)';
+      ctx.font = '800 22px CisBody, system-ui, sans-serif';
+      ctx.fillStyle = tier === 0 ? 'rgba(240,226,198,0.92)' : on ? '#8fe87c' : 'rgba(214,190,152,0.7)';
       ctx.fillText(tier > 0 && !on ? 'Switched off' : `Fitted: ${u.effect(tier)}`, x + 22, y + 118);
       if (!maxed) {
-        ctx.font = '700 18px CisBody, system-ui, sans-serif';
+        ctx.font = '700 21px CisBody, system-ui, sans-serif';
         ctx.fillStyle = '#ffd873';
         ctx.fillText(`Next: ${u.effect(tier + 1)}`, x + 22, y + 142);
       }
@@ -418,7 +341,7 @@ export function drawUpgrades(ctx, L, meta, scroll, button, t, intro = 1, safeTop
 
       if (maxed) {
         ctx.textAlign = 'right';
-        ctx.font = '900 19px CisBody, system-ui, sans-serif';
+        ctx.font = '900 22px CisBody, system-ui, sans-serif';
         ctx.fillStyle = '#8fe87c';
         ctx.fillText('FULLY FITTED', x + w - 24, y + 46);
       } else {
@@ -445,4 +368,69 @@ export function drawUpgrades(ctx, L, meta, scroll, button, t, intro = 1, safeTop
 
   ctx.restore();
   return y + scroll;
+}
+
+// --- Achievements ------------------------------------------------------------
+//
+// The last section of the REWARDS page. One card per achievement: name, what to do,
+// a tape-measure of how far along it is, and the reward. An earned one carries a CLAIM
+// button; rewards are never paid silently, because the claim is what makes the page
+// worth opening. Claimable cards sort to the top, then the ones in progress (nearest
+// first), then the claimed.
+function achievementCards(ctx, L, meta, button, x, y, w) {
+  ctx.textAlign = 'center';
+  UI.tape(ctx, W / 2, y + 26, 340, 54, 0.012, 'ACHIEVEMENTS', { font: UI.F.stencil(36), ink: '#2a1a0c' });
+  y += 52;
+  ctx.font = '700 22px CisBody, system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(240,226,198,0.92)';
+  ctx.fillText(`${achEarned(meta)} of ${ACHIEVEMENTS.length} earned`, W / 2, y + 12);
+  y += 40;
+
+  const rank = (a) => {
+    const st = meta.ach[a.id] | 0;
+    if (st === 1) return 0;
+    if (st === 2) return 3;
+    return 1 + (1 - achProgress(meta, a) / a.goal) * 0.99;
+  };
+  const list = ACHIEVEMENTS.map((a, i) => ({ a, r: rank(a), i }))
+    .sort((p, q) => p.r - q.r || p.i - q.i);
+
+  const H = 124;
+  for (const { a } of list) {
+    // Cards well off screen are skipped: there are 27 and only ~8 are ever visible.
+    if (y > L.h + 40 || y + H < -40) { y += H + 12; cardIndex++; continue; }
+    const st = meta.ach[a.id] | 0;
+    const cur = achProgress(meta, a);
+    // The stagger is per card and the intro clock stops at 1.4, so without a cap the
+    // twentieth card would never finish fading in.
+    if (cardIndex > 6) cardIndex = 6;
+    card(ctx, x, y, w, H, null);
+
+    ctx.textAlign = 'left';
+    ctx.font = UI.F.stencil(30);
+    ctx.fillStyle = st === 2 ? 'rgba(243,233,210,0.6)' : st === 1 ? '#ffd873' : '#f3e9d2';
+    ctx.fillText(a.name.toUpperCase(), x + 22, y + 32);
+    ctx.fillStyle = st === 2 ? 'rgba(232,214,182,0.55)' : 'rgba(232,214,182,0.9)';
+    clipText(ctx, a.desc, x + 22, y + 64, w - 250, 22, 700);
+
+    if (st === 0) {
+      bar(ctx, x + 22, y + 86, w - 300, 20, cur / a.goal);
+      ctx.font = '800 20px CisBody, system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(243,233,210,0.9)';
+      ctx.fillText(`${cur} / ${a.goal}`, x + w - 268, y + 97);
+    }
+
+    if (st === 1) {
+      button(`achclaim-${a.id}`, x + w - 212, y + 30, 190, 64, `CLAIM +${a.reward}`, 'reward', null,
+        { badge: true });
+    } else {
+      ctx.textAlign = 'right';
+      ctx.font = UI.F.stencil(26);
+      ctx.fillStyle = st === 2 ? '#8fe87c' : 'rgba(255,233,168,0.75)';
+      ctx.fillText(st === 2 ? 'CLAIMED' : `+${a.reward}`, x + w - 24, y + (st === 2 ? 62 : 97));
+    }
+    y += H + 12;
+  }
+
+  return y;
 }

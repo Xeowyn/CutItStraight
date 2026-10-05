@@ -562,11 +562,29 @@ function tileTexture(ctx, tex, cx, bottomY, length, tint, L, w) {
 // One CanvasPattern per (context, texture), made on first use. A pattern belongs to
 // the context that created it.
 const boardPatterns = new WeakMap();
+// The pattern is made from a CANVAS copy of the texture, never from the <img> itself.
+// Measured on the owner's RTX 5060 Ti at 2560x1249 (2026-10-04): with the pattern built
+// straight from the JPEG image the whole game ran at 20 fps while cutting, and 180 fps
+// with this one fill removed. A pattern whose transform changes every frame makes
+// Chrome re-prepare the image for each fill; a canvas source is already pixels and
+// costs nothing. Canvas copies are 2 MB each, so only the last few boards are kept.
+const PATTERN_KEEP = 4;
 function boardPattern(ctx, tex) {
   let m = boardPatterns.get(ctx);
   if (!m) boardPatterns.set(ctx, (m = new Map()));
   let pat = m.get(tex);
-  if (!pat) m.set(tex, (pat = ctx.createPattern(tex, 'repeat')));
+  if (pat) return pat;
+  let src = tex;
+  try {
+    const cv = document.createElement('canvas');
+    cv.width = tex.naturalWidth || tex.width;
+    cv.height = tex.naturalHeight || tex.height;
+    cv.getContext('2d').drawImage(tex, 0, 0);
+    src = cv;
+  } catch (e) { /* fall back to the image */ }
+  pat = ctx.createPattern(src, 'repeat');
+  m.set(tex, pat);
+  if (m.size > PATTERN_KEEP) m.delete(m.keys().next().value);
   return pat;
 }
 
@@ -1906,6 +1924,29 @@ function drawContactReticle(ctx, x, y, band, running, t, cut) {
 
 // --- HUD -------------------------------------------------------------------
 
+const comboSprites = new Map();
+function comboSprite(mult, col) {
+  let c = comboSprites.get(mult);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = 400; c.height = 240;            // 200x120 logical at 2x
+  const g = c.getContext('2d');
+  g.scale(2, 2);
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = '900 54px CisBody, system-ui, sans-serif';
+  g.lineJoin = 'round';
+  g.lineWidth = 9;
+  g.strokeStyle = 'rgba(6,12,18,0.9)';
+  g.strokeText(`${mult}x`, 100, 60);
+  g.shadowColor = col;
+  g.shadowBlur = 44;
+  g.fillStyle = col;
+  g.fillText(`${mult}x`, 100, 60);
+  comboSprites.set(mult, c);
+  return c;
+}
+
 // The multiplier sits right beside the blade, where the player's eyes already are.
 export function drawCombo(ctx, L, cut, mult, t) {
   if (mult <= 1) return;
@@ -1915,19 +1956,14 @@ export function drawCombo(ctx, L, cut, mult, t) {
   const cols = ['#7df0ff', '#7df0ff', '#8fe87c', '#ffd35c', '#ff8a3d'];
   const col = cols[Math.min(cols.length - 1, mult - 1)];
 
+  // One sprite per multiplier, drawn once. It used to be stroked, shadow-blurred and
+  // filled live on every frame of the pulse - the whole time a combo was held - which
+  // is why the game ran worst exactly when the player was doing best.
+  const sp = comboSprite(mult, col);
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(pulse, pulse);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = '900 54px CisBody, system-ui, sans-serif';
-  ctx.lineWidth = 9;
-  ctx.strokeStyle = 'rgba(6,12,18,0.9)';
-  ctx.strokeText(`${mult}x`, 0, 0);
-  ctx.shadowColor = col;
-  ctx.shadowBlur = 22;
-  ctx.fillStyle = col;
-  ctx.fillText(`${mult}x`, 0, 0);
+  ctx.drawImage(sp, -sp.width / 4, -sp.height / 4, sp.width / 2, sp.height / 2);
   ctx.restore();
 
   // Timer ring showing how long the combo has been held.
@@ -2070,8 +2106,8 @@ export function drawHud(ctx, L, opts) {
   const shown = Math.max(dmg, strain * SPLIT_STRAIN_SPAN);
   const urgent = dmg > 0.55;
   ctx.textAlign = 'right';
-  ctx.font = '800 16px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = urgent ? '#ff8a6a' : dmg > 0.02 ? 'rgba(255,190,140,0.8)' : 'rgba(236,222,196,0.7)';
+  ctx.font = '800 19px CisBody, system-ui, sans-serif';
+  ctx.fillStyle = urgent ? '#ff8a6a' : dmg > 0.02 ? 'rgba(255,190,140,0.95)' : 'rgba(243,233,210,0.92)';
   ctx.fillText('SPLIT', dx - 10, dy + 7);
   ctx.fillStyle = 'rgba(20,12,6,0.65)';
   roundRect(ctx, dx, dy, dw, dh, dh / 2); ctx.fill();
@@ -2101,8 +2137,8 @@ export function drawHud(ctx, L, opts) {
 
   // Workshop and material label, so the per-level variety is legible.
   ctx.textAlign = 'center';
-  ctx.font = '700 19px CisBody, system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(226,240,248,0.55)';
+  ctx.font = '700 20px CisBody, system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(243,233,210,0.85)';
   ctx.fillText(`${level.workshop.name.toUpperCase()}  ·  ${level.material.name.toUpperCase()}`, STAGE_W / 2, by + 60);
   ctx.restore();
 
@@ -2252,6 +2288,25 @@ export function drawStar(ctx, x, y, r, filled, t, variant) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(Math.sin(t * 2) * 0.04);
+  // A lit star is a gradient fill under a 26-34px shadowBlur. Drawn live that is a
+  // blur pass per star per frame, on every screen that shows the star count - so it
+  // is baked to a sprite per (colour, size) and blitted.
+  if (filled) {
+    const sp = starSprite(r, variant);
+    ctx.drawImage(sp.cv, -sp.half, -sp.half, sp.half * 2, sp.half * 2);
+    ctx.restore();
+    return;
+  }
+  starPath(ctx, r);
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.26)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function starPath(ctx, r) {
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
     const rad = i % 2 === 0 ? r : r * 0.46;
@@ -2260,32 +2315,47 @@ export function drawStar(ctx, x, y, r, filled, t, variant) {
     i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   }
   ctx.closePath();
-  if (filled) {
-    const purple = variant === 'purple';
-    const g = ctx.createLinearGradient(0, -r, 0, r);
-    if (purple) {
-      g.addColorStop(0, '#f8e6ff');
-      g.addColorStop(0.42, '#c56bff');
-      g.addColorStop(1, '#7a2bd6');
-    } else {
-      g.addColorStop(0, '#fff8d4');
-      g.addColorStop(0.5, '#ffd23f');
-      g.addColorStop(1, '#ee9c17');
-    }
-    ctx.fillStyle = g;
-    ctx.shadowColor = purple ? 'rgba(198,110,255,0.95)' : 'rgba(255,200,60,0.85)';
-    ctx.shadowBlur = purple ? 34 : 26;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = purple ? 'rgba(70,20,120,0.6)' : 'rgba(140,84,10,0.55)';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-  } else {
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.26)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-  }
-  ctx.restore();
 }
+
+const starSprites = new Map();
+function starSprite(r, variant) {
+  const purple = variant === 'purple';
+  const rr = Math.max(4, Math.round(r));
+  const key = `${purple ? 'p' : 'g'}${rr}`;
+  let sp = starSprites.get(key);
+  if (sp) return sp;
+  if (starSprites.size > 48) starSprites.clear();
+  const SS = 2;                              // supersample, so it survives a pop scale
+  const blur = purple ? 34 : 26;
+  const half = rr + blur + 6;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = half * 2 * SS;
+  const g = cv.getContext('2d');
+  g.scale(SS, SS);
+  g.translate(half, half);
+  starPath(g, rr);
+  const gr = g.createLinearGradient(0, -rr, 0, rr);
+  if (purple) {
+    gr.addColorStop(0, '#f8e6ff');
+    gr.addColorStop(0.42, '#c56bff');
+    gr.addColorStop(1, '#7a2bd6');
+  } else {
+    gr.addColorStop(0, '#fff8d4');
+    gr.addColorStop(0.5, '#ffd23f');
+    gr.addColorStop(1, '#ee9c17');
+  }
+  g.fillStyle = gr;
+  g.shadowColor = purple ? 'rgba(198,110,255,0.95)' : 'rgba(255,200,60,0.85)';
+  g.shadowBlur = blur * SS;
+  g.fill();
+  g.shadowBlur = 0;
+  g.strokeStyle = purple ? 'rgba(70,20,120,0.6)' : 'rgba(140,84,10,0.55)';
+  g.lineWidth = 2.5;
+  g.stroke();
+  // `half` is scaled back to the radius actually asked for, so a rounded size never
+  // shows as a jump in the star's size.
+  sp = { cv, half: half * (r / rr) };
+  starSprites.set(key, sp);
+  return sp;
+}
+

@@ -147,6 +147,14 @@ export function setMaterialProfile(kind) {
   if (ready) nodes.whine.type = profile.whineType;
 }
 
+// The saw is the one sound that never stops, so it sits well under everything else.
+// The owner found it abrasive at its original level (2026-10-04). SAW_LEVEL scales the
+// motor and the cutting noise (about -6 dB); the whine - a steady tone, and the part
+// that grates over a whole board - comes down further (about -10 dB). The pitch still
+// bends with accuracy, so it still tells the player how the cut is going.
+const SAW_LEVEL = 0.5;
+const WHINE_LEVEL = 0.32;
+
 // Continuous saw sound. `err01` is normalised tracking error, 0 = dead on the line.
 export function updateSaw(running, err01, speed01) {
   if (!ready) return;
@@ -160,13 +168,13 @@ export function updateSaw(running, err01, speed01) {
     return;
   }
   motor.frequency.setTargetAtTime(p.motor + speed01 * 34, t, 0.2);
-  motorGain.gain.setTargetAtTime(0.13, t, 0.1);
+  motorGain.gain.setTargetAtTime(0.13 * SAW_LEVEL, t, 0.1);
   // On the line: high, clean whine. Drifting off: pitch sags and noise opens up.
   whine.frequency.setTargetAtTime(p.whine - err01 * p.bend, t, 0.05);
-  whineGain.gain.setTargetAtTime(p.whineGain + (1 - err01) * 0.03, t, 0.08);
+  whineGain.gain.setTargetAtTime((p.whineGain + (1 - err01) * 0.03) * WHINE_LEVEL, t, 0.08);
   cutFilter.Q.setTargetAtTime(p.cutQ, t, 0.1);
   cutFilter.frequency.setTargetAtTime(p.cutFreq + err01 * p.cutSpread, t, 0.06);
-  cutGain.gain.setTargetAtTime(p.cutGain + err01 * 0.14, t, 0.06);
+  cutGain.gain.setTargetAtTime((p.cutGain + err01 * 0.14) * SAW_LEVEL, t, 0.06);
 }
 
 function env(gain, peak, attack, decay) {
